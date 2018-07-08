@@ -58,8 +58,17 @@ ifeq ($(PLATFORM),PLATFORM_DESKTOP)
         ifeq ($(UNAMEOS),Linux)
             PLATFORM_OS=LINUX
         endif
-        ifeq ($(UNAMEOS),FreeBSD)
-            PLATFORM_OS=FREEBSD
+       ifeq ($(UNAMEOS),FreeBSD)
+            PLATFORM_OS=BSD
+        endif
+        ifeq ($(UNAMEOS),OpenBSD)
+            PLATFORM_OS=BSD
+        endif
+        ifeq ($(UNAMEOS),NetBSD)
+            PLATFORM_OS=BSD
+        endif
+        ifeq ($(UNAMEOS),DragonFly)
+            PLATFORM_OS=BSD
         endif
         ifeq ($(UNAMEOS),Darwin)
             PLATFORM_OS=OSX
@@ -97,8 +106,8 @@ ifeq ($(PLATFORM),PLATFORM_DESKTOP)
     ifeq ($(PLATFORM_OS),OSX)
         RAYLIB_RELEASE_PATH = $(RAYLIB_PATH)/release/libs/osx
     endif
-    ifeq ($(PLATFORM_OS),FREEBSD)
-        RAYLIB_RELEASE_PATH = $(RAYLIB_PATH)/release/libs/freebsd
+    ifeq ($(PLATFORM_OS),BSD)
+        RAYLIB_RELEASE_PATH = $(RAYLIB_PATH)/release/libs/bsd
     endif
 endif
 ifeq ($(PLATFORM),PLATFORM_RPI)
@@ -117,8 +126,8 @@ ifeq ($(PLATFORM),PLATFORM_DESKTOP)
         # OSX default compiler
         CC = clang
     endif
-    ifeq ($(PLATFORM_OS),FREEBSD)
-        # FreeBSD default compiler
+    ifeq ($(PLATFORM_OS),BSD)
+        # FreeBSD, OpenBSD, NetBSD, DragonFly default compiler
         CC = clang
     endif
 endif
@@ -160,10 +169,10 @@ ifeq ($(PLATFORM),PLATFORM_DESKTOP)
     ifeq ($(PLATFORM_OS),WINDOWS)
         # resources file contains windows exe icon
         # -Wl,--subsystem,windows hides the console window
-        CFLAGS += $(RAYLIB_PATH)/src/resources -Wl,--subsystem,windows
+        CFLAGS += $(RAYLIB_PATH)/src/raylib.rc.o -Wl,--subsystem,windows
     endif
     ifeq ($(PLATFORM_OS),LINUX)
-        CFLAGS += -no-pie -D_DEFAULT_SOURCE
+        CFLAGS += -D_DEFAULT_SOURCE
     endif
 endif
 ifeq ($(PLATFORM),PLATFORM_RPI)

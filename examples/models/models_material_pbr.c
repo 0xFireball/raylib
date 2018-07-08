@@ -38,6 +38,7 @@ int main()
 
     // Load model and PBR material
     Model model = LoadModel("resources/pbr/trooper.obj");
+    MeshTangents(&model.mesh);
     model.material = LoadMaterialPBR((Color){ 255, 255, 255, 255 }, 1.0f, 1.0f);
 
     // Define lights attributes
@@ -72,13 +73,13 @@ int main()
 
             ClearBackground(RAYWHITE);
 
-            Begin3dMode(camera);
+            BeginMode3D(camera);
 
                 DrawModel(model, Vector3Zero(), 1.0f, WHITE);
                 
                 DrawGrid(10, 1.0f);
 
-            End3dMode();
+            EndMode3D();
 
             DrawFPS(10, 10);
 
@@ -121,7 +122,7 @@ static Material LoadMaterialPBR(Color albedo, float metalness, float roughness)
     mat.shader.locs[LOC_MAP_BRDF] = GetShaderLocation(mat.shader, "brdfLUT");
 
     // Set view matrix location
-    mat.shader.locs[LOC_MATRIX_MODEL] = GetShaderLocation(mat.shader, "mMatrix");
+    mat.shader.locs[LOC_MATRIX_MODEL] = GetShaderLocation(mat.shader, "matModel");
     mat.shader.locs[LOC_MATRIX_VIEW] = GetShaderLocation(mat.shader, "view");
     mat.shader.locs[LOC_VECTOR_VIEW] = GetShaderLocation(mat.shader, "viewPos");
     
@@ -151,7 +152,7 @@ static Material LoadMaterialPBR(Color albedo, float metalness, float roughness)
     SetShaderValuei(shdrIrradiance, GetShaderLocation(shdrIrradiance, "environmentMap"), (int[1]){ 0 }, 1);
     SetShaderValuei(shdrPrefilter, GetShaderLocation(shdrPrefilter, "environmentMap"), (int[1]){ 0 }, 1);
 
-    Texture2D texHDR = LoadTexture("resources/pinetree.hdr");
+    Texture2D texHDR = LoadTexture("resources/dresden_square.hdr");
     Texture2D cubemap = GenTextureCubemap(shdrCubemap, texHDR, CUBEMAP_SIZE);
     mat.maps[MAP_IRRADIANCE].texture = GenTextureIrradiance(shdrIrradiance, cubemap, IRRADIANCE_SIZE);
     mat.maps[MAP_PREFILTER].texture = GenTexturePrefilter(shdrPrefilter, cubemap, PREFILTERED_SIZE);

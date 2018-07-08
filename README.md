@@ -12,7 +12,6 @@ pure spartan-programmers way. Are you ready to learn? Jump to [code examples!](h
 
 [![Build Status](https://travis-ci.org/raysan5/raylib.svg?branch=develop)](https://travis-ci.org/raysan5/raylib)
 [![https://ci.appveyor.com/api/projects/status/github/raysan5/raylib?svg=true](https://ci.appveyor.com/api/projects/status/github/raysan5/raylib?svg=true)](https://ci.appveyor.com/project/raysan5/raylib)
-[![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/raylib/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 [![Chat on Discord](https://img.shields.io/discord/308323056592486420.svg?logo=discord)](https://discord.gg/VkzNHUE)
 [![License](https://img.shields.io/badge/license-zlib%2Flibpng-blue.svg)](LICENSE.md)
 [![Twitter URL](https://img.shields.io/twitter/url/http/shields.io.svg?style=social&label=Follow)](https://twitter.com/raysan5)
@@ -30,7 +29,7 @@ features
    *  Shaders support, including Model shaders and Postprocessing shaders
    *  Powerful math module for Vector, Matrix and Quaternion operations: [raymath](https://github.com/raysan5/raylib/blob/master/src/raymath.h)
    *  Audio loading and playing with streaming support (WAV, OGG, FLAC, XM, MOD)
-   *  Multiple platforms support: Windows, Linux, FreeBSD, MacOS, UWP, Android, Raspberry Pi, HTML5.
+   *  Multiple platforms support: Windows, Linux, FreeBSD, OpenBSD, NetBSD, DragonFly, MacOS, UWP, Android, Raspberry Pi, HTML5.
    *  VR stereo rendering with configurable HMD device parameters
    *  NO external dependencies, all required libraries included with raylib
    *  Complete bindings to LUA ([raylib-lua](https://github.com/raysan5/raylib-lua)) and Go ([raylib-go](https://github.com/gen2brain/raylib-go))
@@ -67,7 +66,7 @@ contact
    * Facebook: [http://www.facebook.com/raylibgames](http://www.facebook.com/raylibgames)
    * Reddit: [https://www.reddit.com/r/raylib](https://www.reddit.com/r/raylib)
    * Twitch: [http://www.twitch.tv/raysan5](http://www.twitch.tv/raysan5)
-   * Patreon: [https://www.patreon.com/raysan5](https://www.patreon.com/raysan5)
+   * Patreon: [https://www.patreon.com/raylib](https://www.patreon.com/raylib)
    * YouTube: [https://www.youtube.com/channel/raylib](https://www.youtube.com/channel/UC8WIBkhYb5sBNqXO1mZ7WSQ)
 
 If you are using raylib and you enjoy it, please, [let me know][raysan5].

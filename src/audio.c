@@ -17,13 +17,14 @@
 *       Required types and functions are defined in the same module.
 *
 *   #define USE_OPENAL_BACKEND
-*       Use OpenAL Soft audio backend usage
+*       Use OpenAL Soft audio backend
 *
 *   #define SUPPORT_FILEFORMAT_WAV
 *   #define SUPPORT_FILEFORMAT_OGG
 *   #define SUPPORT_FILEFORMAT_XM
 *   #define SUPPORT_FILEFORMAT_MOD
 *   #define SUPPORT_FILEFORMAT_FLAC
+*   #define SUPPORT_FILEFORMAT_MP3
 *       Selected desired fileformats to be supported for loading. Some of those formats are
 *       supported by default, to remove support, just comment unrequired #define in this module
 *
@@ -72,18 +73,17 @@
 *
 **********************************************************************************************/
 
-#include "config.h"
-
-#if !defined(USE_OPENAL_BACKEND)
-    #define USE_MINI_AL 1       // Set to 1 to use mini_al; 0 to use OpenAL.
-#endif
-
 #if defined(AUDIO_STANDALONE)
     #include "audio.h"
     #include <stdarg.h>         // Required for: va_list, va_start(), vfprintf(), va_end()
 #else
-    #include "raylib.h"
+    #include "config.h"         // Defines module configuration flags
+    #include "raylib.h"         // Declares module functions
     #include "utils.h"          // Required for: fopen() Android mapping
+#endif
+
+#if !defined(USE_OPENAL_BACKEND)
+    #define USE_MINI_AL 1       // Set to 1 to use mini_al; 0 to use OpenAL.
 #endif
 
 #include "external/mini_al.h"   // Implemented in mini_al.c. Cannot implement this here because it conflicts with Win32 APIs such as CloseWindow(), etc.
@@ -127,6 +127,11 @@
     #include "external/dr_flac.h"       // FLAC loading functions
 #endif
 
+#if defined(SUPPORT_FILEFORMAT_MP3)
+    #define DR_MP3_IMPLEMENTATION
+    #include "external/dr_mp3.h"       // MP3 loading functions
+#endif
+
 #ifdef _MSC_VER
     #undef bool
 #endif
@@ -158,6 +163,7 @@
 typedef enum { 
     MUSIC_AUDIO_OGG = 0, 
     MUSIC_AUDIO_FLAC, 
+    MUSIC_AUDIO_MP3, 
     MUSIC_MODULE_XM, 
     MUSIC_MODULE_MOD 
 } MusicContextType;
@@ -170,6 +176,9 @@ typedef struct MusicData {
 #endif
 #if defined(SUPPORT_FILEFORMAT_FLAC)
     drflac *ctxFlac;                    // FLAC audio context
+#endif
+#if defined(SUPPORT_FILEFORMAT_MP3)
+    drmp3 ctxMp3;                       // MP3 audio context
 #endif
 #if defined(SUPPORT_FILEFORMAT_XM)
     jar_xm_context_t *ctxXm;            // XM chiptune context
@@ -296,7 +305,7 @@ static mal_uint32 OnSendAudioDataToDevice(mal_device *pDevice, mal_uint32 frameC
     (void)pDevice;
 
     // Mixing is basically just an accumulation. We need to initialize the output buffer to 0.
-    memset(pFramesOut, 0, frameCount*pDevice->channels*mal_get_sample_size_in_bytes(pDevice->format));
+    memset(pFramesOut, 0, frameCount*pDevice->channels*mal_get_bytes_per_sample(pDevice->format));
 
     // Using a mutex here for thread-safety which makes things not real-time. This is unlikely to be necessary for this project, but may
     // want to consider how you might want to avoid this.
@@ -330,11 +339,7 @@ static mal_uint32 OnSendAudioDataToDevice(mal_device *pDevice, mal_uint32 frameC
                         framesToReadRightNow = sizeof(tempBuffer)/sizeof(tempBuffer[0])/DEVICE_CHANNELS;
                     }
 
-                    // If we're not looping, we need to make sure we flush the internal buffers of the DSP pipeline to ensure we get the
-                    // last few samples.
-                    bool flushDSP = !audioBuffer->looping;
-
-                    mal_uint32 framesJustRead = mal_dsp_read_frames_ex(&audioBuffer->dsp, framesToReadRightNow, tempBuffer, flushDSP);
+                    mal_uint32 framesJustRead = (mal_uint32)mal_dsp_read(&audioBuffer->dsp, framesToReadRightNow, tempBuffer, audioBuffer->dsp.pUserData);
                     if (framesJustRead > 0) 
                     {
                         float *framesOut = (float *)pFramesOut + (framesRead*device.channels);
@@ -394,7 +399,7 @@ static mal_uint32 OnAudioBufferDSPRead(mal_dsp *pDSP, mal_uint32 frameCount, voi
     isSubBufferProcessed[0] = audioBuffer->isSubBufferProcessed[0];
     isSubBufferProcessed[1] = audioBuffer->isSubBufferProcessed[1];
 
-    mal_uint32 frameSizeInBytes = mal_get_sample_size_in_bytes(audioBuffer->dsp.config.formatIn)*audioBuffer->dsp.config.channelsIn;
+    mal_uint32 frameSizeInBytes = mal_get_bytes_per_sample(audioBuffer->dsp.formatConverterIn.config.formatIn)*audioBuffer->dsp.formatConverterIn.config.channels;
 
     // Fill out every frame until we find a buffer that's marked as processed. Then fill the remainder with 0.
     mal_uint32 framesRead = 0;
@@ -640,7 +645,7 @@ void SetMasterVolume(float volume)
 // Create a new audio buffer. Initially filled with silence
 AudioBuffer *CreateAudioBuffer(mal_format format, mal_uint32 channels, mal_uint32 sampleRate, mal_uint32 bufferSizeInFrames, AudioBufferUsage usage)
 {
-    AudioBuffer *audioBuffer = (AudioBuffer *)calloc(sizeof(*audioBuffer) + (bufferSizeInFrames*channels*mal_get_sample_size_in_bytes(format)), 1);
+    AudioBuffer *audioBuffer = (AudioBuffer *)calloc(sizeof(*audioBuffer) + (bufferSizeInFrames*channels*mal_get_bytes_per_sample(format)), 1);
     if (audioBuffer == NULL)
     {
         TraceLog(LOG_ERROR, "CreateAudioBuffer() : Failed to allocate memory for audio buffer");
@@ -656,10 +661,13 @@ AudioBuffer *CreateAudioBuffer(mal_format format, mal_uint32 channels, mal_uint3
     dspConfig.channelsOut = DEVICE_CHANNELS;
     dspConfig.sampleRateIn = sampleRate;
     dspConfig.sampleRateOut = DEVICE_SAMPLE_RATE;
-    mal_result resultMAL = mal_dsp_init(&dspConfig, OnAudioBufferDSPRead, audioBuffer, &audioBuffer->dsp);
+    dspConfig.onRead = OnAudioBufferDSPRead;
+    dspConfig.pUserData = audioBuffer;
+    dspConfig.allowDynamicSampleRate = MAL_TRUE;    // <-- Required for pitch shifting.
+    mal_result resultMAL = mal_dsp_init(&dspConfig, &audioBuffer->dsp);
     if (resultMAL != MAL_SUCCESS) 
     {
-        TraceLog(LOG_ERROR, "LoadSoundFromWave() : Failed to create data conversion pipeline");
+        TraceLog(LOG_ERROR, "CreateAudioBuffer() : Failed to create data conversion pipeline");
         free(audioBuffer);
         return NULL;
     }
@@ -687,7 +695,7 @@ void DeleteAudioBuffer(AudioBuffer *audioBuffer)
 {
     if (audioBuffer == NULL)
     {
-        TraceLog(LOG_ERROR, "PlayAudioBuffer() : No audio buffer");
+        TraceLog(LOG_ERROR, "DeleteAudioBuffer() : No audio buffer");
         return;
     }
 
@@ -700,7 +708,7 @@ bool IsAudioBufferPlaying(AudioBuffer *audioBuffer)
 {
     if (audioBuffer == NULL)
     {
-        TraceLog(LOG_ERROR, "PlayAudioBuffer() : No audio buffer");
+        TraceLog(LOG_ERROR, "IsAudioBufferPlaying() : No audio buffer");
         return false;
     }
 
@@ -728,7 +736,7 @@ void StopAudioBuffer(AudioBuffer *audioBuffer)
 {
     if (audioBuffer == NULL)
     {
-        TraceLog(LOG_ERROR, "PlayAudioBuffer() : No audio buffer");
+        TraceLog(LOG_ERROR, "StopAudioBuffer() : No audio buffer");
         return;
     }
 
@@ -747,7 +755,7 @@ void PauseAudioBuffer(AudioBuffer *audioBuffer)
 {
     if (audioBuffer == NULL)
     {
-        TraceLog(LOG_ERROR, "PlayAudioBuffer() : No audio buffer");
+        TraceLog(LOG_ERROR, "PauseAudioBuffer() : No audio buffer");
         return;
     }
 
@@ -759,7 +767,7 @@ void ResumeAudioBuffer(AudioBuffer *audioBuffer)
 {
     if (audioBuffer == NULL)
     {
-        TraceLog(LOG_ERROR, "PlayAudioBuffer() : No audio buffer");
+        TraceLog(LOG_ERROR, "ResumeAudioBuffer() : No audio buffer");
         return;
     }
 
@@ -771,7 +779,7 @@ void SetAudioBufferVolume(AudioBuffer *audioBuffer, float volume)
 {
     if (audioBuffer == NULL)
     {
-        TraceLog(LOG_ERROR, "PlayAudioBuffer() : No audio buffer");
+        TraceLog(LOG_ERROR, "SetAudioBufferVolume() : No audio buffer");
         return;
     }
 
@@ -783,7 +791,7 @@ void SetAudioBufferPitch(AudioBuffer *audioBuffer, float pitch)
 {
     if (audioBuffer == NULL)
     {
-        TraceLog(LOG_ERROR, "PlayAudioBuffer() : No audio buffer");
+        TraceLog(LOG_ERROR, "SetAudioBufferPitch() : No audio buffer");
         return;
     }
 
@@ -791,7 +799,7 @@ void SetAudioBufferPitch(AudioBuffer *audioBuffer, float pitch)
 
     // Pitching is just an adjustment of the sample rate. Note that this changes the duration of the sound - higher pitches
     // will make the sound faster; lower pitches make it slower.
-    mal_uint32 newOutputSampleRate = (mal_uint32)((((float)audioBuffer->dsp.config.sampleRateOut / (float)audioBuffer->dsp.config.sampleRateIn) / pitch) * audioBuffer->dsp.config.sampleRateIn);
+    mal_uint32 newOutputSampleRate = (mal_uint32)((((float)audioBuffer->dsp.src.config.sampleRateOut / (float)audioBuffer->dsp.src.config.sampleRateIn) / pitch) * audioBuffer->dsp.src.config.sampleRateIn);
     mal_dsp_set_output_sample_rate(&audioBuffer->dsp, newOutputSampleRate);
 }
 
@@ -907,13 +915,13 @@ Sound LoadSoundFromWave(Wave wave)
         mal_format formatIn  = ((wave.sampleSize == 8) ? mal_format_u8 : ((wave.sampleSize == 16) ? mal_format_s16 : mal_format_f32));
         mal_uint32 frameCountIn = wave.sampleCount;  // Is wave->sampleCount actually the frame count? That terminology needs to change, if so.
 
-        mal_uint32 frameCount = mal_convert_frames(NULL, DEVICE_FORMAT, DEVICE_CHANNELS, DEVICE_SAMPLE_RATE, NULL, formatIn, wave.channels, wave.sampleRate, frameCountIn);
+        mal_uint32 frameCount = (mal_uint32)mal_convert_frames(NULL, DEVICE_FORMAT, DEVICE_CHANNELS, DEVICE_SAMPLE_RATE, NULL, formatIn, wave.channels, wave.sampleRate, frameCountIn);
         if (frameCount == 0) TraceLog(LOG_WARNING, "LoadSoundFromWave() : Failed to get frame count for format conversion");
 
         AudioBuffer* audioBuffer = CreateAudioBuffer(DEVICE_FORMAT, DEVICE_CHANNELS, DEVICE_SAMPLE_RATE, frameCount, AUDIO_BUFFER_USAGE_STATIC);
         if (audioBuffer == NULL) TraceLog(LOG_WARNING, "LoadSoundFromWave() : Failed to create audio buffer");
 
-        frameCount = mal_convert_frames(audioBuffer->buffer, audioBuffer->dsp.config.formatIn, audioBuffer->dsp.config.channelsIn, audioBuffer->dsp.config.sampleRateIn, wave.data, formatIn, wave.channels, wave.sampleRate, frameCountIn);
+        frameCount = (mal_uint32)mal_convert_frames(audioBuffer->buffer, audioBuffer->dsp.formatConverterIn.config.formatIn, audioBuffer->dsp.formatConverterIn.config.channels, audioBuffer->dsp.src.config.sampleRateIn, wave.data, formatIn, wave.channels, wave.sampleRate, frameCountIn);
         if (frameCount == 0) TraceLog(LOG_WARNING, "LoadSoundFromWave() : Format conversion failed");
 
         sound.audioBuffer = audioBuffer;
@@ -1015,7 +1023,7 @@ void UpdateSound(Sound sound, const void *data, int samplesCount)
     StopAudioBuffer(audioBuffer);
 
     // TODO: May want to lock/unlock this since this data buffer is read at mixing time.
-    memcpy(audioBuffer->buffer, data, samplesCount*audioBuffer->dsp.config.channelsIn*mal_get_sample_size_in_bytes(audioBuffer->dsp.config.formatIn));
+    memcpy(audioBuffer->buffer, data, samplesCount*audioBuffer->dsp.formatConverterIn.config.channels*mal_get_bytes_per_sample(audioBuffer->dsp.formatConverterIn.config.formatIn));
 #else
     ALint sampleRate, sampleSize, channels;
     alGetBufferi(sound.buffer, AL_FREQUENCY, &sampleRate);
@@ -1145,7 +1153,7 @@ void WaveFormat(Wave *wave, int sampleRate, int sampleSize, int channels)
 
     mal_uint32 frameCountIn = wave->sampleCount;  // Is wave->sampleCount actually the frame count? That terminology needs to change, if so.
 
-    mal_uint32 frameCount = mal_convert_frames(NULL, formatOut, channels, sampleRate, NULL, formatIn, wave->channels, wave->sampleRate, frameCountIn);
+    mal_uint32 frameCount = (mal_uint32)mal_convert_frames(NULL, formatOut, channels, sampleRate, NULL, formatIn, wave->channels, wave->sampleRate, frameCountIn);
     if (frameCount == 0) 
     {
         TraceLog(LOG_ERROR, "WaveFormat() : Failed to get frame count for format conversion.");
@@ -1154,7 +1162,7 @@ void WaveFormat(Wave *wave, int sampleRate, int sampleSize, int channels)
 
     void *data = malloc(frameCount*channels*(sampleSize/8));
 
-    frameCount = mal_convert_frames(data, formatOut, channels, sampleRate, wave->data, formatIn, wave->channels, wave->sampleRate, frameCountIn);
+    frameCount = (mal_uint32)mal_convert_frames(data, formatOut, channels, sampleRate, wave->data, formatIn, wave->channels, wave->sampleRate, frameCountIn);
     if (frameCount == 0) 
     {
         TraceLog(LOG_ERROR, "WaveFormat() : Format conversion failed.");
@@ -1276,7 +1284,7 @@ Wave WaveCopy(Wave wave)
 void WaveCrop(Wave *wave, int initSample, int finalSample)
 {
     if ((initSample >= 0) && (initSample < finalSample) &&
-        (finalSample > 0) && (finalSample < wave->sampleCount))
+        (finalSample > 0) && ((unsigned int)finalSample < wave->sampleCount))
     {
         int sampleCount = finalSample - initSample;
 
@@ -1296,9 +1304,9 @@ float *GetWaveData(Wave wave)
 {
     float *samples = (float *)malloc(wave.sampleCount*wave.channels*sizeof(float));
 
-    for (int i = 0; i < wave.sampleCount; i++)
+    for (unsigned int i = 0; i < wave.sampleCount; i++)
     {
-        for (int j = 0; j < wave.channels; j++)
+        for (unsigned int j = 0; j < wave.channels; j++)
         {
             if (wave.sampleSize == 8) samples[wave.channels*i + j] = (float)(((unsigned char *)wave.data)[wave.channels*i + j] - 127)/256.0f;
             else if (wave.sampleSize == 16) samples[wave.channels*i + j] = (float)((short *)wave.data)[wave.channels*i + j]/32767.0f;
@@ -1335,7 +1343,7 @@ Music LoadMusicStream(const char *fileName)
             music->ctxType = MUSIC_AUDIO_OGG;
             music->loopCount = -1;                       // Infinite loop by default
 
-            TraceLog(LOG_DEBUG, "[%s] FLAC total samples: %i", fileName, music->totalSamples);
+            TraceLog(LOG_DEBUG, "[%s] OGG total samples: %i", fileName, music->totalSamples);
             TraceLog(LOG_DEBUG, "[%s] OGG sample rate: %i", fileName, info.sample_rate);
             TraceLog(LOG_DEBUG, "[%s] OGG channels: %i", fileName, info.channels);
             TraceLog(LOG_DEBUG, "[%s] OGG memory required: %i", fileName, info.temp_memory_required);
@@ -1359,6 +1367,27 @@ Music LoadMusicStream(const char *fileName)
             TraceLog(LOG_DEBUG, "[%s] FLAC sample rate: %i", fileName, music->ctxFlac->sampleRate);
             TraceLog(LOG_DEBUG, "[%s] FLAC bits per sample: %i", fileName, music->ctxFlac->bitsPerSample);
             TraceLog(LOG_DEBUG, "[%s] FLAC channels: %i", fileName, music->ctxFlac->channels);
+        }
+    }
+#endif
+#if defined(SUPPORT_FILEFORMAT_MP3)
+    else if (IsFileExtension(fileName, ".mp3"))
+    {
+        drmp3_init_file(&music->ctxMp3, fileName, NULL)
+
+        if (music->ctxMp3 == NULL) TraceLog(LOG_WARNING, "[%s] MP3 audio file could not be opened", fileName);
+        else
+        {
+            music->stream = InitAudioStream(music->ctxMp3.sampleRate, 16, music->ctxMp3.channels);
+            //music->totalSamples = (unsigned int)music->ctxMp3.totalSampleCount/music->ctxMp3.channels;    //TODO!
+            music->samplesLeft = music->totalSamples;
+            music->ctxType = MUSIC_AUDIO_MP3;
+            music->loopCount = -1;                       // Infinite loop by default
+
+            TraceLog(LOG_DEBUG, "[%s] MP3 total samples: %i", fileName, music->totalSamples);
+            TraceLog(LOG_DEBUG, "[%s] MP3 sample rate: %i", fileName, music->ctxMp3.sampleRate);
+            //TraceLog(LOG_DEBUG, "[%s] MP3 bits per sample: %i", fileName, music->ctxMp3.bitsPerSample);
+            TraceLog(LOG_DEBUG, "[%s] MP3 channels: %i", fileName, music->ctxMp3.channels);
         }
     }
 #endif
@@ -1416,6 +1445,9 @@ void UnloadMusicStream(Music music)
     if (music->ctxType == MUSIC_AUDIO_OGG) stb_vorbis_close(music->ctxOgg);
 #if defined(SUPPORT_FILEFORMAT_FLAC)
     else if (music->ctxType == MUSIC_AUDIO_FLAC) drflac_free(music->ctxFlac);
+#endif
+#if defined(SUPPORT_FILEFORMAT_MP3)
+    else if (music->ctxType == MUSIC_AUDIO_MP3) drmp3_uninit(&music->ctxMp3);
 #endif
 #if defined(SUPPORT_FILEFORMAT_XM)
     else if (music->ctxType == MUSIC_MODULE_XM) jar_xm_free_context(music->ctxXm);
@@ -1508,7 +1540,7 @@ void StopMusicStream(Music music)
     {
         case MUSIC_AUDIO_OGG: stb_vorbis_seek_start(music->ctxOgg); break;
 #if defined(SUPPORT_FILEFORMAT_FLAC)
-        case MUSIC_MODULE_FLAC: /* TODO: Restart FLAC context */ break;
+        case MUSIC_AUDIO_FLAC: /* TODO: Restart FLAC context */ break;
 #endif
 #if defined(SUPPORT_FILEFORMAT_XM)
         case MUSIC_MODULE_XM: /* TODO: Restart XM context */ break;
@@ -1555,6 +1587,14 @@ void UpdateMusicStream(Music music)
             {
                 // NOTE: Returns the number of samples to process
                 unsigned int numSamplesFlac = (unsigned int)drflac_read_s16(music->ctxFlac, samplesCount*music->stream.channels, (short *)pcm);
+
+            } break;
+        #endif
+        #if defined(SUPPORT_FILEFORMAT_MP3)
+            case MUSIC_AUDIO_MP3: 
+            {
+                // NOTE: Returns the number of samples to process
+                unsigned int numSamplesMp3 = (unsigned int)drmp3_read_f32(music->ctxMp3, samplesCount*music->stream.channels, (short *)pcm);
 
             } break;
         #endif

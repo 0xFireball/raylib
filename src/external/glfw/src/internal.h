@@ -128,7 +128,7 @@ typedef enum VkStructureType
     VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR = 1000006000,
     VK_STRUCTURE_TYPE_MIR_SURFACE_CREATE_INFO_KHR = 1000007000,
     VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR = 1000009000,
-    VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK = 1000053000,
+    VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK = 1000123000,
     VK_STRUCTURE_TYPE_MAX_ENUM = 0x7FFFFFFF
 } VkStructureType;
 
@@ -267,6 +267,7 @@ struct _GLFWwndconfig
     GLFWbool      floating;
     GLFWbool      maximized;
     GLFWbool      centerCursor;
+    GLFWbool      focusOnShow;
     struct {
         GLFWbool  retina;
         char      frameName[256];
@@ -372,6 +373,7 @@ struct _GLFWwindow
     GLFWbool            decorated;
     GLFWbool            autoIconify;
     GLFWbool            floating;
+    GLFWbool            focusOnShow;
     GLFWbool            shouldClose;
     void*               userPointer;
     GLFWvidmode         videoMode;

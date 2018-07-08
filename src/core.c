@@ -5,7 +5,7 @@
 *   PLATFORMS SUPPORTED: 
 *       - PLATFORM_DESKTOP: Windows (Win32, Win64)
 *       - PLATFORM_DESKTOP: Linux (X11 desktop mode)
-*       - PLATFORM_DESKTOP: FreeBSD (X11 desktop)
+*       - PLATFORM_DESKTOP: FreeBSD, OpenBSD, NetBSD, DragonFly (X11 desktop)
 *       - PLATFORM_DESKTOP: OSX/macOS
 *       - PLATFORM_ANDROID: Android 4.0 (ARM, ARM64) 
 *       - PLATFORM_RPI:     Raspberry Pi 0,1,2,3 (Raspbian)
@@ -15,7 +15,7 @@
 *   CONFIGURATION:
 *
 *   #define PLATFORM_DESKTOP
-*       Windowing and input system configured for desktop platforms: Windows, Linux, OSX, FreeBSD
+*       Windowing and input system configured for desktop platforms: Windows, Linux, OSX, FreeBSD, OpenBSD, NetBSD, DragonFly
 *       NOTE: Oculus Rift CV1 requires PLATFORM_DESKTOP for mirror rendering - View [rlgl] module to enable it
 *
 *   #define PLATFORM_ANDROID
@@ -50,11 +50,14 @@
 *   #define SUPPORT_BUSY_WAIT_LOOP
 *       Use busy wait loop for timing sync, if not defined, a high-resolution timer is setup and used
 *
+*   #define SUPPORT_SCREEN_CAPTURE
+*       Allow automatic screen capture of current screen pressing F12, defined in KeyCallback()
+*
 *   #define SUPPORT_GIF_RECORDING
 *       Allow automatic gif recording of current screen pressing CTRL+F12, defined in KeyCallback()
 *
 *   DEPENDENCIES:
-*       rglfw    - Manage graphic device, OpenGL context and inputs on PLATFORM_DESKTOP (Windows, Linux, OSX. FreeBSD)
+*       rglfw    - Manage graphic device, OpenGL context and inputs on PLATFORM_DESKTOP (Windows, Linux, OSX. FreeBSD, OpenBSD, NetBSD, DragonFly)
 *       raymath  - 3D math functionality (Vector2, Vector3, Matrix, Quaternion)
 *       camera   - Multiple 3D camera modes (free, orbital, 1st person, 3rd person)
 *       gestures - Gestures system for touch-ready devices (or simulated from mouse inputs)
@@ -81,9 +84,8 @@
 *
 **********************************************************************************************/
 
-#include "config.h"
-
-#include "raylib.h"
+#include "config.h"             // Defines module configuration flags
+#include "raylib.h"             // Declares module functions
 
 #if (defined(__linux__) || defined(PLATFORM_WEB)) && _POSIX_C_SOURCE < 199309L
     #undef _POSIX_C_SOURCE
@@ -93,8 +95,8 @@
 #define RAYMATH_IMPLEMENTATION  // Define external out-of-line implementation of raymath here
 #include "raymath.h"            // Required for: Vector3 and Matrix functions
 
-#include "rlgl.h"           // raylib OpenGL abstraction layer to OpenGL 1.1, 3.3+ or ES2
-#include "utils.h"          // Required for: fopen() Android mapping
+#include "rlgl.h"               // raylib OpenGL abstraction layer to OpenGL 1.1, 3.3+ or ES2
+#include "utils.h"              // Required for: fopen() Android mapping
 
 #if defined(SUPPORT_GESTURES_SYSTEM)
     #define GESTURES_IMPLEMENTATION
@@ -108,14 +110,14 @@
 
 #if defined(SUPPORT_GIF_RECORDING)
     #define RGIF_IMPLEMENTATION
-    #include "external/rgif.h"   // Support GIF recording
+    #include "external/rgif.h"  // Support GIF recording
 #endif
 
 #include <stdio.h>          // Standard input / output lib
 #include <stdlib.h>         // Required for: malloc(), free(), rand(), atexit()
 #include <stdint.h>         // Required for: typedef unsigned long long int uint64_t, used by hi-res timer
 #include <time.h>           // Required for: time() - Android/RPI hi-res timer (NOTE: Linux only!)
-#include <math.h>           // Required for: tan() [Used in Begin3dMode() to set perspective]
+#include <math.h>           // Required for: tan() [Used in BeginMode3D() to set perspective]
 #include <string.h>         // Required for: strrchr(), strcmp()
 //#include <errno.h>          // Macros for reporting and retrieving error conditions through error codes
 #include <ctype.h>          // Required for: tolower() [Used in IsFileExtension()]
@@ -139,13 +141,7 @@
 #if defined(PLATFORM_DESKTOP) || defined(PLATFORM_WEB)
     //#define GLFW_INCLUDE_NONE     // Disable the standard OpenGL header inclusion on GLFW3
     #include <GLFW/glfw3.h>         // GLFW3 library: Windows, OpenGL context and Input management
-
-    #if defined(__linux__)
-        #define GLFW_EXPOSE_NATIVE_X11   // Linux specific definitions for getting
-        #define GLFW_EXPOSE_NATIVE_GLX   // native functions like glfwGetX11Window
-        #include <GLFW/glfw3native.h>    // which are required for hiding mouse
-    #endif
-    //#include <GL/gl.h>        // OpenGL functions (GLFW3 already includes gl.h)
+                                    // NOTE: GLFW3 already includes gl.h (OpenGL) headers
 
     #if !defined(SUPPORT_BUSY_WAIT_LOOP) && defined(_WIN32)
     // NOTE: Those functions require linking with winmm library
@@ -292,8 +288,6 @@ static bool cursorHidden = false;           // Track if cursor is hidden
 static bool cursorOnScreen = false;         // Tracks if cursor is inside client area
 
 #if defined(PLATFORM_DESKTOP) || defined(PLATFORM_RPI) || defined(PLATFORM_WEB) || defined(PLATFORM_UWP)
-static int screenshotCounter = 0;           // Screenshots counter
-
 // Register mouse states
 static char previousMouseState[3] = { 0 };  // Registers previous mouse button state
 static char currentMouseState[3] = { 0 };   // Registers current mouse button state
@@ -342,9 +336,13 @@ static double targetTime = 0.0;             // Desired time for one frame, if 0 
 static unsigned char configFlags = 0;       // Configuration flags (bit based)
 static bool showLogo = false;               // Track if showing logo at init is enabled
 
+#if defined(SUPPORT_SCREEN_CAPTURE)
+static int screenshotCounter = 0;           // Screenshots counter
+#endif
+
 #if defined(SUPPORT_GIF_RECORDING)
-static int gifFramesCounter = 0;
-static bool gifRecording = false;
+static int gifFramesCounter = 0;            // GIF frames counter
+static bool gifRecording = false;           // GIF recording state
 #endif
 
 //----------------------------------------------------------------------------------
@@ -745,7 +743,6 @@ void SetWindowSize(int width, int height)
 #endif
 }
 
-
 // Get current screen width
 int GetScreenWidth(void)
 {
@@ -885,7 +882,7 @@ void EndDrawing(void)
 }
 
 // Initialize 2D mode with custom camera (2D)
-void Begin2dMode(Camera2D camera)
+void BeginMode2D(Camera2D camera)
 {
     rlglDraw();                         // Draw Buffers (Only OpenGL 3+ and ES2)
 
@@ -903,7 +900,7 @@ void Begin2dMode(Camera2D camera)
 }
 
 // Ends 2D mode with custom camera
-void End2dMode(void)
+void EndMode2D(void)
 {
     rlglDraw();                         // Draw Buffers (Only OpenGL 3+ and ES2)
 
@@ -911,7 +908,7 @@ void End2dMode(void)
 }
 
 // Initializes 3D mode with custom camera (3D)
-void Begin3dMode(Camera camera)
+void BeginMode3D(Camera3D camera)
 {
     rlglDraw();                         // Draw Buffers (Only OpenGL 3+ and ES2)
     
@@ -951,7 +948,7 @@ void Begin3dMode(Camera camera)
 }
 
 // Ends 3D mode and returns to default 2D orthographic mode
-void End3dMode(void)
+void EndMode3D(void)
 {
     rlglDraw();                         // Process internal buffers (update + draw)
 
@@ -1029,7 +1026,7 @@ Ray GetMouseRay(Vector2 mousePosition, Camera camera)
     // Calculate view matrix from camera look at
     Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
 
-    Matrix matProj;
+    Matrix matProj = MatrixIdentity();
 
     if (camera.type == CAMERA_PERSPECTIVE) 
     {
@@ -1041,6 +1038,7 @@ Ray GetMouseRay(Vector2 mousePosition, Camera camera)
         float aspect = (float)screenWidth/(float)screenHeight;
         double top = camera.fovy/2.0;
         double right = top*aspect;
+        
         // Calculate projection matrix from orthographic
         matProj = MatrixOrtho(-right, right, -top, top, 0.01, 1000.0);
     }
@@ -1070,18 +1068,19 @@ Ray GetMouseRay(Vector2 mousePosition, Camera camera)
 Vector2 GetWorldToScreen(Vector3 position, Camera camera)
 {
     // Calculate projection matrix (from perspective instead of frustum
-    Matrix matProj;
+    Matrix matProj = MatrixIdentity();
 
-    if(camera.type == CAMERA_PERSPECTIVE) 
+    if (camera.type == CAMERA_PERSPECTIVE)
     {
         // Calculate projection matrix from perspective
         matProj = MatrixPerspective(camera.fovy*DEG2RAD, ((double)GetScreenWidth()/(double)GetScreenHeight()), 0.01, 1000.0);
     }
-    else if(camera.type == CAMERA_ORTHOGRAPHIC)
+    else if (camera.type == CAMERA_ORTHOGRAPHIC)
     {
         float aspect = (float)screenWidth/(float)screenHeight;
         double top = camera.fovy/2.0;
         double right = top*aspect;
+        
         // Calculate projection matrix from orthographic
         matProj = MatrixOrtho(-right, right, -top, top, 0.01, 1000.0);
     }
@@ -1153,23 +1152,23 @@ double GetTime(void)
 #endif
 }
 
-// Returns normalized float array for a Color
-float *ColorToFloat(Color color)
-{
-    static float buffer[4];
-
-    buffer[0] = (float)color.r/255;
-    buffer[1] = (float)color.g/255;
-    buffer[2] = (float)color.b/255;
-    buffer[3] = (float)color.a/255;
-
-    return buffer;
-}
-
 // Returns hexadecimal value for a Color
 int ColorToInt(Color color)
 {
     return (((int)color.r << 24) | ((int)color.g << 16) | ((int)color.b << 8) | (int)color.a);
+}
+
+// Returns color normalized as float [0..1]
+Vector4 ColorNormalize(Color color)
+{
+    Vector4 result;
+
+    result.x = (float)color.r/255.0f;
+    result.y = (float)color.g/255.0f;
+    result.z = (float)color.b/255.0f;
+    result.w = (float)color.a/255.0f;
+    
+    return result;
 }
 
 // Returns HSV values for a Color
@@ -1313,6 +1312,7 @@ bool IsFileExtension(const char *fileName, const char *ext)
                 }
             }
         }
+        else result = false;
     #else
         if (strcmp(fileExt, ext) == 0) result = true;
     #endif
@@ -1373,24 +1373,32 @@ bool ChangeDirectory(const char *dir)
     return (CHDIR(dir) == 0);
 }
 
-#if defined(PLATFORM_DESKTOP)
 // Check if a file has been dropped into window
 bool IsFileDropped(void)
 {
+#if defined(PLATFORM_DESKTOP)
     if (dropFilesCount > 0) return true;
     else return false;
+#else
+    return false;
+#endif
 }
 
 // Get dropped files names
 char **GetDroppedFiles(int *count)
 {
+#if defined(PLATFORM_DESKTOP)
     *count = dropFilesCount;
     return dropFilesPath;
+#else
+    return NULL;
+#endif
 }
 
 // Clear dropped files paths buffer
 void ClearDroppedFiles(void)
 {
+#if defined(PLATFORM_DESKTOP)
     if (dropFilesCount > 0)
     {
         for (int i = 0; i < dropFilesCount; i++) free(dropFilesPath[i]);
@@ -1399,8 +1407,8 @@ void ClearDroppedFiles(void)
 
         dropFilesCount = 0;
     }
-}
 #endif
+}
 
 // Save integer value to storage file (to defined position)
 // NOTE: Storage positions is directly related to file memory layout (4 bytes each integer)
@@ -1876,31 +1884,30 @@ static bool InitGraphicsDevice(int width, int height)
     displayHeight = screenHeight;
 #endif  // defined(PLATFORM_WEB)
 
-    glfwDefaultWindowHints();                       // Set default windows hints
-
-    // Check some Window creation flags
-    if (configFlags & FLAG_WINDOW_RESIZABLE) glfwWindowHint(GLFW_RESIZABLE, GL_TRUE);   // Resizable window
-    else glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);  // Avoid window being resizable
-
-    if (configFlags & FLAG_WINDOW_DECORATED) glfwWindowHint(GLFW_DECORATED, GL_TRUE);   // Border and buttons on Window
-    
-    if (configFlags & FLAG_WINDOW_TRANSPARENT)
-    {
-        // TODO: Enable transparent window (not ready yet on GLFW 3.2)
-    }
-
-    if (configFlags & FLAG_MSAA_4X_HINT)
-    {
-        glfwWindowHint(GLFW_SAMPLES, 4);            // Enables multisampling x4 (MSAA), default is 0
-        TraceLog(LOG_INFO, "Trying to enable MSAA x4");
-    }
-    
+    glfwDefaultWindowHints();                   // Set default windows hints:
     //glfwWindowHint(GLFW_RED_BITS, 8);             // Framebuffer red color component bits
-    //glfwWindowHint(GLFW_DEPTH_BITS, 16);          // Depthbuffer bits (24 by default)
+    //glfwWindowHint(GLFW_GREEN_BITS, 8);           // Framebuffer green color component bits
+    //glfwWindowHint(GLFW_BLUE_BITS, 8);            // Framebuffer blue color component bits
+    //glfwWindowHint(GLFW_ALPHA_BITS, 8);           // Framebuffer alpha color component bits
+    //glfwWindowHint(GLFW_DEPTH_BITS, 24);          // Depthbuffer bits
     //glfwWindowHint(GLFW_REFRESH_RATE, 0);         // Refresh rate for fullscreen window
-    //glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);    // Default OpenGL API to use. Alternative: GLFW_OPENGL_ES_API
+    //glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API); // OpenGL API to use. Alternative: GLFW_OPENGL_ES_API
     //glfwWindowHint(GLFW_AUX_BUFFERS, 0);          // Number of auxiliar buffers
 
+    // Check some Window creation flags
+    if (configFlags & FLAG_WINDOW_RESIZABLE) glfwWindowHint(GLFW_RESIZABLE, GL_TRUE);       // Resizable window
+    else glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);  // Avoid window being resizable
+
+    if (configFlags & FLAG_WINDOW_UNDECORATED) glfwWindowHint(GLFW_DECORATED, GL_FALSE);    // Border and buttons on Window
+    else glfwWindowHint(GLFW_DECORATED, GL_TRUE);   // Decorated window
+    
+#if !defined(PLATFORM_WEB)  // FLAG_WINDOW_TRANSPARENT not supported on HTML5
+    if (configFlags & FLAG_WINDOW_TRANSPARENT) glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);     // Transparent framebuffer
+    else glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_FALSE);  // Opaque framebuffer
+#endif
+
+    if (configFlags & FLAG_MSAA_4X_HINT) glfwWindowHint(GLFW_SAMPLES, 4);   // Tries to enable multisampling x4 (MSAA), default is 0
+    
     // NOTE: When asking for an OpenGL context version, most drivers provide highest supported version
     // with forward compatibility to older OpenGL versions.
     // For example, if using OpenGL 1.1, driver can provide a 4.3 context forward compatible.
@@ -1918,11 +1925,11 @@ static bool InitGraphicsDevice(int width, int height)
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // Profiles Hint: Only 3.3 and above!
                                                                        // Other values: GLFW_OPENGL_ANY_PROFILE, GLFW_OPENGL_COMPAT_PROFILE
 #if defined(__APPLE__)
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);  // OSX Requires
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);  // OSX Requires fordward compatibility
 #else
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_FALSE); // Fordward Compatibility Hint: Only 3.3 and above!
 #endif
-        //glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE);
+        //glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE); // Request OpenGL DEBUG context
     }
 
     if (fullscreen)
@@ -2791,10 +2798,12 @@ static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, i
         }
         else
     #endif  // SUPPORT_GIF_RECORDING
+    #if defined(SUPPORT_SCREEN_CAPTURE)
         {
             TakeScreenshot(FormatText("screenshot%03i.png", screenshotCounter));
             screenshotCounter++;
         }
+    #endif  // SUPPORT_SCREEN_CAPTURE
     }
 #endif  // PLATFORM_DESKTOP
     else
@@ -2899,7 +2908,7 @@ static void WindowSizeCallback(GLFWwindow *window, int width, int height)
     rlLoadIdentity();                           // Reset current matrix (MODELVIEW)
     rlClearScreenBuffers();                     // Clear screen buffers (color and depth)
 
-    // Window size must be updated to be used on 3D mode to get new aspect ratio (Begin3dMode())
+    // Window size must be updated to be used on 3D mode to get new aspect ratio (BeginMode3D())
     // NOTE: Be careful! GLFW3 will choose the closest fullscreen resolution supported by current monitor,
     // for example, if reescaling back to 800x450 (desired), it could set 720x480 (closest fullscreen supported)
     screenWidth = width;
@@ -3070,7 +3079,8 @@ static void AndroidCommandCallback(struct android_app *app, int32_t cmd)
 // Android: Get input events
 static int32_t AndroidInputCallback(struct android_app *app, AInputEvent *event)
 {
-    //http://developer.android.com/ndk/reference/index.html
+    // If additional inputs are required check:
+    // https://developer.android.com/ndk/reference/group/input
 
     int type = AInputEvent_getType(event);
 
@@ -3083,6 +3093,23 @@ static int32_t AndroidInputCallback(struct android_app *app, AInputEvent *event)
         // Get second touch position
         touchPosition[1].x = AMotionEvent_getX(event, 1);
         touchPosition[1].y = AMotionEvent_getY(event, 1);
+        
+        // Useful functions for gamepad inputs:
+        //AMotionEvent_getAction()
+        //AMotionEvent_getAxisValue()
+        //AMotionEvent_getButtonState()
+        
+        // Gamepad dpad button presses capturing
+        // TODO: That's weird, key input (or button)
+        // shouldn't come as a TYPE_MOTION event... 
+        int32_t keycode = AKeyEvent_getKeyCode(event);
+        if (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN)
+        {
+            currentKeyState[keycode] = 1;  // Key down
+            lastKeyPressed = keycode;
+        }
+        else currentKeyState[keycode] = 0;  // Key up
+
     }
     else if (type == AINPUT_EVENT_TYPE_KEY)
     {
@@ -3091,9 +3118,9 @@ static int32_t AndroidInputCallback(struct android_app *app, AInputEvent *event)
 
         // Save current button and its state
         // NOTE: Android key action is 0 for down and 1 for up
-        if (AKeyEvent_getAction(event) == 0)
+        if (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN)
         {
-            currentKeyState[keycode] = 1;  // Key down
+            currentKeyState[keycode] = 1;   // Key down
             lastKeyPressed = keycode;
         }
         else currentKeyState[keycode] = 0;  // Key up
@@ -3131,26 +3158,32 @@ static int32_t AndroidInputCallback(struct android_app *app, AInputEvent *event)
     else if (flags == AMOTION_EVENT_ACTION_MOVE) gestureEvent.touchAction = TOUCH_MOVE;
 
     // Register touch points count
+    // NOTE: Documentation says pointerCount is Always >= 1,
+    // but in practice it can be 0 or over a million
     gestureEvent.pointCount = AMotionEvent_getPointerCount(event);
 
-    // Register touch points id
-    gestureEvent.pointerId[0] = AMotionEvent_getPointerId(event, 0);
-    gestureEvent.pointerId[1] = AMotionEvent_getPointerId(event, 1);
+    // Only enable gestures for 1-3 touch points
+    if ((gestureEvent.pointCount > 0) && (gestureEvent.pointCount < 4))
+    {
+        // Register touch points id
+        // NOTE: Only two points registered
+        gestureEvent.pointerId[0] = AMotionEvent_getPointerId(event, 0);
+        gestureEvent.pointerId[1] = AMotionEvent_getPointerId(event, 1);
 
-    // Register touch points position
-    // NOTE: Only two points registered
-    gestureEvent.position[0] = (Vector2){ AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0) };
-    gestureEvent.position[1] = (Vector2){ AMotionEvent_getX(event, 1), AMotionEvent_getY(event, 1) };
+        // Register touch points position
+        gestureEvent.position[0] = (Vector2){ AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0) };
+        gestureEvent.position[1] = (Vector2){ AMotionEvent_getX(event, 1), AMotionEvent_getY(event, 1) };
 
-    // Normalize gestureEvent.position[x] for screenWidth and screenHeight
-    gestureEvent.position[0].x /= (float)GetScreenWidth();
-    gestureEvent.position[0].y /= (float)GetScreenHeight();
+        // Normalize gestureEvent.position[x] for screenWidth and screenHeight
+        gestureEvent.position[0].x /= (float)GetScreenWidth();
+        gestureEvent.position[0].y /= (float)GetScreenHeight();
+        
+        gestureEvent.position[1].x /= (float)GetScreenWidth();
+        gestureEvent.position[1].y /= (float)GetScreenHeight();
 
-    gestureEvent.position[1].x /= (float)GetScreenWidth();
-    gestureEvent.position[1].y /= (float)GetScreenHeight();
-
-    // Gesture data is sent to gestures system for processing
-    ProcessGestureEvent(gestureEvent);
+        // Gesture data is sent to gestures system for processing
+        ProcessGestureEvent(gestureEvent);
+    }
 #else
     
     // Support only simple touch position
@@ -3456,12 +3489,14 @@ static void ProcessKeyboard(void)
     // Check exit key (same functionality as GLFW3 KeyCallback())
     if (currentKeyState[exitKey] == 1) windowShouldClose = true;
 
+#if defined(SUPPORT_SCREEN_CAPTURE)
     // Check screen capture key (raylib key: KEY_F12)
     if (currentKeyState[301] == 1)
     {
         TakeScreenshot(FormatText("screenshot%03i.png", screenshotCounter));
         screenshotCounter++;
     }
+#endif
 }
 
 // Restore default keyboard input
