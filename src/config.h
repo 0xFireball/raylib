@@ -36,6 +36,10 @@
 // Optionally include raygui
 #define INCLUDE_RAYGUI              1
 
+// Optionally include other modules (easings, physac)
+#define INCLUDE_EASINGS             1
+#define INCLUDE_PHYSAC              1
+
 //------------------------------------------------------------------------------------
 // Module: core - Configuration Flags
 //------------------------------------------------------------------------------------

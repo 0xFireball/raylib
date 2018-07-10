@@ -411,6 +411,7 @@ endif
 # Define object required on compilation
 OBJS = core.o \
        gui.o \
+       optional.o \
        rlgl.o \
        shapes.o \
        textures.o \
@@ -508,6 +509,10 @@ core.o : core.c raylib.h rlgl.h utils.h raymath.h gestures.h
 
 # Compile gui module
 gui.o : gui.c
+	$(CC) -c $< $(CFLAGS) $(INCLUDE_PATHS) -D$(PLATFORM) -D$(GRAPHICS)
+
+# Compile optional modules
+optional.o : optional.c
 	$(CC) -c $< $(CFLAGS) $(INCLUDE_PATHS) -D$(PLATFORM) -D$(GRAPHICS)
 
 # Compile rglfw module
