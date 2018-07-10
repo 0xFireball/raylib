@@ -33,6 +33,9 @@
     #include "cmake/config.h"
 #else
 
+// Optionally include raygui
+#define INCLUDE_RAYGUI              1
+
 //------------------------------------------------------------------------------------
 // Module: core - Configuration Flags
 //------------------------------------------------------------------------------------
