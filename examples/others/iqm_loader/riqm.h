@@ -34,13 +34,6 @@
 #ifndef RIQM_H
 #define RIQM_H
 
-// TODO dont break everything
-static bool vaoSupported = false;
-static Matrix modelview;
-static Matrix projection;
-
-#include <stdio.h>          // Required for: FILE
-
 //#define RIQM_STATIC
 #ifdef RIQM_STATIC
     #define RIQMDEF static              // Functions just visible to module including this file
@@ -71,48 +64,32 @@ typedef struct Pose {
 } Pose;
 
 typedef struct Animation {
-    int jointCount;
-    Joint *joints;      // NOTE: Joints in anims do not have names
+    int jointCount;         // Number of joints (bones)
+    Joint *joints;          // Joints array
+                            // NOTE: Joints in anims do not have names
 
-    int frameCount;
-    float framerate;
+    int frameCount;         // Number of animation frames
+    float framerate;        // Frame change speed
 
-    Pose **framepose;
+    Pose **framepose;       // Poses array by frame (and one pose by joint)
 } Animation;
 
-typedef struct AnimatedMesh {
-    char name[MESH_NAME_LENGTH];
-
-    int vertexCount;
-    int triangleCount;
-
-    float *vertices;
-    float *normals;
-    float *texcoords;
-    float *animVertices;
-    float *animNormals;
-    unsigned short *triangles;
-
-    int *weightId;
-    float *weightBias;
-
-    unsigned int vaoId;
-    unsigned int vboId[7];
-} AnimatedMesh;
-
+// Animated Model type
 typedef struct AnimatedModel {
-    int meshCount;
-    AnimatedMesh *mesh;
+    Matrix transform;       // Local transform matrix
+    
+    int meshCount;          // Number of meshes
+    Mesh *meshes;           // Meshes array
 
-    int materialCount;
-    int *meshMaterialId;
-    Material *materials;
+    int materialCount;      // Number of materials
+    Material *materials;    // Materials array
+    
+    int *meshMaterialId;    // Mesh materials ids
 
-    int jointCount;
-    Joint *joints;
-
-    Pose *basepose;
-    Matrix transform;
+    // Animation required data
+    int jointCount;         // Number of joints (and keyposes)
+    Joint *joints;          // Mesh joints (bones)
+    Pose *basepose;         // Mesh base-poses by joint
 } AnimatedModel;
 
 //----------------------------------------------------------------------------------
@@ -125,15 +102,14 @@ RIQMDEF void UnloadAnimatedModel(AnimatedModel model);
 RIQMDEF Animation LoadAnimation(const char *filename);
 RIQMDEF void UnloadAnimation(Animation anim);
 
-RIQMDEF AnimatedModel AnimatedModelAddTexture(AnimatedModel model,const char *filename);    // GENERIC!
-RIQMDEF AnimatedModel SetMeshMaterial(AnimatedModel model,int meshid, int textureid);       // GENERIC!
-
+RIQMDEF AnimatedModel AnimatedModelAddTexture(AnimatedModel model, const char *filename);    // GENERIC!
+RIQMDEF AnimatedModel SetMeshMaterial(AnimatedModel model, int meshid, int textureid);       // GENERIC!
 
 // Usage functionality
 RIQMDEF bool CheckSkeletonsMatch(AnimatedModel model, Animation anim);
 RIQMDEF void AnimateModel(AnimatedModel model, Animation anim, int frame);
-RIQMDEF void DrawAnimatedModel(AnimatedModel model,Vector3 position,float scale,Color tint);
-RIQMDEF void DrawAnimatedModelEx(AnimatedModel model,Vector3 position,Vector3 rotationAxis,float rotationAngle, Vector3 scale,Color tint);
+RIQMDEF void DrawAnimatedModel(AnimatedModel model, Vector3 position, float scale, Color tint);
+RIQMDEF void DrawAnimatedModelEx(AnimatedModel model, Vector3 position, Vector3 rotationAxis, float rotationAngle, Vector3 scale, Color tint);
 
 #endif // RIQM_H
 
@@ -153,10 +129,6 @@ RIQMDEF void DrawAnimatedModelEx(AnimatedModel model,Vector3 position,Vector3 ro
 #include <string.h>         // Required for: strncmp(),strcpy()
 
 #include "raymath.h"        // Required for: Vector3, Quaternion functions
-#include "rlgl.h"           // raylib OpenGL abstraction layer to OpenGL 1.1, 2.1, 3.3+ or ES2
-
-#include "glad.h"
-
 
 //----------------------------------------------------------------------------------
 // Defines and Macros
@@ -192,17 +164,6 @@ typedef struct IQMMesh {
     unsigned int first_vertex, num_vertexes;
     unsigned int first_triangle, num_triangles;
 } IQMMesh;
-
-typedef enum {
-    IQM_POSITION     = 0,
-    IQM_TEXCOORD     = 1,
-    IQM_NORMAL       = 2,
-    IQM_TANGENT      = 3,                     // tangents unused by default
-    IQM_BLENDINDEXES = 4,
-    IQM_BLENDWEIGHTS = 5,
-    IQM_COLOR        = 6,                    // vertex colors unused by default
-    IQM_CUSTOM       = 0x10                  // custom vertex values unused by default
-} IQMVertexType;
 
 typedef struct IQMTriangle {
     unsigned int vertex[3];
@@ -245,6 +206,18 @@ typedef struct IQMBounds {                    // bounds unused by default
     float xyradius, radius;
 } IQMBounds;
 
+
+typedef enum {
+    IQM_POSITION     = 0,
+    IQM_TEXCOORD     = 1,
+    IQM_NORMAL       = 2,
+    IQM_TANGENT      = 3,                    // tangents unused by default
+    IQM_BLENDINDEXES = 4,
+    IQM_BLENDWEIGHTS = 5,
+    IQM_COLOR        = 6,                    // vertex colors unused by default
+    IQM_CUSTOM       = 0x10                  // custom vertex values unused by default
+} IQMVertexType;
+
 //----------------------------------------------------------------------------------
 // Global Variables Definition
 //----------------------------------------------------------------------------------
@@ -252,411 +225,7 @@ typedef struct IQMBounds {                    // bounds unused by default
 //----------------------------------------------------------------------------------
 // Module specific Functions Declaration
 //----------------------------------------------------------------------------------
-void rlLoadAnimatedMesh(AnimatedMesh *amesh, bool dynamic);
-void rlUnloadAnimatedMesh(AnimatedMesh *amesh);
-void rlUpdateAnimatedMesh(AnimatedMesh *amesh);
-void rlDrawAnimatedMesh(AnimatedMesh amesh, Material material, Matrix transform);
-
 static AnimatedModel LoadIQM(const char *filename);
-
-//----------------------------------------------------------------------------------
-// Module Functions Definition
-//----------------------------------------------------------------------------------
-void rlLoadAnimatedMesh(AnimatedMesh *amesh, bool dynamic)
-{
-    amesh->vaoId = 0;        // Vertex Array Object
-    amesh->vboId[0] = 0;     // Vertex positions VBO  << these are the animated vertices in animVertices
-    amesh->vboId[1] = 0;     // Vertex texcoords VBO
-    amesh->vboId[2] = 0;     // Vertex normals VBO    << these are the animated normals in animNormals
-    amesh->vboId[3] = 0;     // Vertex colors VBO
-    amesh->vboId[4] = 0;     // Vertex tangents VBO       UNUSED
-    amesh->vboId[5] = 0;     // Vertex texcoords2 VBO     UNUSED
-    amesh->vboId[6] = 0;     // Vertex indices VBO
-
-#if defined(GRAPHICS_API_OPENGL_11)
-TraceLog(LOG_WARNING, "OGL 11");
-#endif
-#if defined(GRAPHICS_API_OPENGL_21)
-TraceLog(LOG_WARNING, "OGL 21");
-#endif
-#if defined(GRAPHICS_API_OPENGL_33)
-TraceLog(LOG_WARNING, "OGL 33");
-#endif
-#if defined(GRAPHICS_API_OPENGL_ES2)
-TraceLog(LOG_WARNING, "OGL ES2");
-#endif
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    int drawHint = GL_STATIC_DRAW;
-    if (dynamic) drawHint = GL_DYNAMIC_DRAW;
-
-    if (vaoSupported)
-    {
-        // Initialize Quads VAO (Buffer A)
-        glGenVertexArrays(1, &amesh->vaoId);
-        glBindVertexArray(amesh->vaoId);
-    }
-
-    // NOTE: Attributes must be uploaded considering default locations points
-
-    // Enable vertex attributes: position (shader-location = 0)
-    glGenBuffers(1, &amesh->vboId[0]);
-    glBindBuffer(GL_ARRAY_BUFFER, amesh->vboId[0]);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float)*3*amesh->vertexCount, amesh->animVertices, drawHint);
-    glVertexAttribPointer(0, 3, GL_FLOAT, 0, 0, 0);
-    glEnableVertexAttribArray(0);
-
-    // Enable vertex attributes: texcoords (shader-location = 1)
-    glGenBuffers(1, &amesh->vboId[1]);
-    glBindBuffer(GL_ARRAY_BUFFER, amesh->vboId[1]);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float)*2*amesh->vertexCount, amesh->texcoords, drawHint);
-    glVertexAttribPointer(1, 2, GL_FLOAT, 0, 0, 0);
-    glEnableVertexAttribArray(1);
-
-    // Enable vertex attributes: normals (shader-location = 2)
-    if (amesh->animNormals != NULL)
-    {
-        glGenBuffers(1, &amesh->vboId[2]);
-        glBindBuffer(GL_ARRAY_BUFFER, amesh->vboId[2]);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(float)*3*amesh->vertexCount, amesh->animNormals, drawHint);
-        glVertexAttribPointer(2, 3, GL_FLOAT, 0, 0, 0);
-        glEnableVertexAttribArray(2);
-    }
-    else
-    {
-        // Default color vertex attribute set to WHITE
-        glVertexAttrib3f(2, 1.0f, 1.0f, 1.0f);
-        glDisableVertexAttribArray(2);
-    }
-// colors UNUSED
-/*
-    // Default color vertex attribute (shader-location = 3)
-    if (mesh->colors != NULL)
-    {
-        glGenBuffers(1, &amesh->vboId[3]);
-        glBindBuffer(GL_ARRAY_BUFFER, amesh->vboId[3]);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(unsigned char)*4*mesh->vertexCount, mesh->colors, drawHint);
-        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, 0);
-        glEnableVertexAttribArray(3);
-    }
-    else
-    {
-        // Default color vertex attribute set to WHITE
-        glVertexAttrib4f(3, 1.0f, 1.0f, 1.0f, 1.0f);
-        glDisableVertexAttribArray(3);
-    }
-*/
-// colors to default
-    glVertexAttrib4f(3, 1.0f, 1.0f, 1.0f, 1.0f);
-    glDisableVertexAttribArray(3);
-
-// tangents UNUSED
-/*
-    // Default tangent vertex attribute (shader-location = 4)
-    if (mesh->tangents != NULL)
-    {
-        glGenBuffers(1, &mesh->vboId[4]);
-        glBindBuffer(GL_ARRAY_BUFFER, mesh->vboId[4]);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(float)*4*mesh->vertexCount, mesh->tangents, drawHint);
-        glVertexAttribPointer(4, 4, GL_FLOAT, 0, 0, 0);
-        glEnableVertexAttribArray(4);
-    }
-    else
-    {
-        // Default tangents vertex attribute
-        glVertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 0.0f);
-        glDisableVertexAttribArray(4);
-    }
-*/
-// tangents to default
-    glVertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 0.0f);
-    glDisableVertexAttribArray(4);
-
-// texcoords2 UNUSED
-/*
-    // Default texcoord2 vertex attribute (shader-location = 5)
-    if (mesh->texcoords2 != NULL)
-    {
-        glGenBuffers(1, &mesh->vboId[5]);
-        glBindBuffer(GL_ARRAY_BUFFER, mesh->vboId[5]);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(float)*2*mesh->vertexCount, mesh->texcoords2, drawHint);
-        glVertexAttribPointer(5, 2, GL_FLOAT, 0, 0, 0);
-        glEnableVertexAttribArray(5);
-    }
-    else
-    {
-        // Default texcoord2 vertex attribute
-        glVertexAttrib2f(5, 0.0f, 0.0f);
-        glDisableVertexAttribArray(5);
-    }
-*/
-// texcoords2  to default
-    glVertexAttrib2f(5, 0.0f, 0.0f);
-    glDisableVertexAttribArray(5);
-
-    if (amesh->triangles != NULL)
-    {
-        glGenBuffers(1, &amesh->vboId[6]);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, amesh->vboId[6]);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned short)*amesh->triangleCount*3, amesh->triangles, GL_STATIC_DRAW);
-    }
-
-    if (vaoSupported)
-    {
-        if (amesh->vaoId > 0) TraceLog(LOG_INFO, "[VAO ID %i] Mesh uploaded successfully to VRAM (GPU)", amesh->vaoId);
-        else TraceLog(LOG_WARNING, "Mesh could not be uploaded to VRAM (GPU)");
-    }
-    else
-    {
-        TraceLog(LOG_INFO, "[VBOs] Mesh uploaded successfully to VRAM (GPU)");
-    }
-#endif
-}
-
-// Unload mesh data from CPU and GPU
-void rlUnloadAnimatedMesh(AnimatedMesh *amesh)
-{
-    if (amesh->vertices != NULL) free(amesh->vertices);
-    if (amesh->animVertices != NULL) free(amesh->animVertices);
-    if (amesh->texcoords != NULL) free(amesh->texcoords);
-    if (amesh->normals != NULL) free(amesh->normals);
-    if (amesh->animNormals != NULL) free(amesh->animNormals);
-//    if (mesh->colors != NULL) free(mesh->colors);
-//    if (mesh->tangents != NULL) free(mesh->tangents);
-//    if (mesh->texcoords2 != NULL) free(mesh->texcoords2);
-    if (amesh->triangles != NULL) free(amesh->triangles);
-    if (amesh->weightId != NULL) free(amesh->weightId);
-    if (amesh->weightBias != NULL) free(amesh->weightBias);
-
-    rlDeleteBuffers(amesh->vboId[0]);   // vertex
-    rlDeleteBuffers(amesh->vboId[1]);   // texcoords
-    rlDeleteBuffers(amesh->vboId[2]);   // normals
-    rlDeleteBuffers(amesh->vboId[3]);   // colors
-    rlDeleteBuffers(amesh->vboId[4]);   // tangents
-    rlDeleteBuffers(amesh->vboId[5]);   // texcoords2
-    rlDeleteBuffers(amesh->vboId[6]);   // indices
-
-    rlDeleteVertexArrays(amesh->vaoId);
-}
-
-// Update vertex and normal data into GPU
-void rlUpdateAnimatedMesh(AnimatedMesh *amesh)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    // Activate mesh VAO
-    if (vaoSupported) glBindVertexArray(amesh->vaoId);
-
-    // Update positions data
-    glBindBuffer(GL_ARRAY_BUFFER, amesh->vboId[0]);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*3*amesh->vertexCount, amesh->animVertices);
-
-    // Update normals data
-    glBindBuffer(GL_ARRAY_BUFFER, amesh->vboId[2]);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*3*amesh->vertexCount, amesh->animNormals);
-
-    // Unbind the current VAO
-    if (vaoSupported) glBindVertexArray(0);
-
-    //mesh.vertices = glMapBuffer(GL_ARRAY_BUFFER, GL_READ_WRITE);
-    // Now we can modify vertices
-    //glUnmapBuffer(GL_ARRAY_BUFFER);
-#endif
-}
-
-// Draw a 3d mesh with material and transform
-void rlDrawAnimatedMesh(AnimatedMesh amesh, Material material, Matrix transform)
-{
-#if defined(GRAPHICS_API_OPENGL_11)
-/*
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, material.maps[MAP_DIFFUSE].texture.id);
-
-    // NOTE: On OpenGL 1.1 we use Vertex Arrays to draw model
-    glEnableClientState(GL_VERTEX_ARRAY);                   // Enable vertex array
-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);            // Enable texture coords array
-
-    //if (amesh.normals != NULL) glEnableClientState(GL_NORMAL_ARRAY);     // Enable normals array
-    //if (amesh.colors != NULL) glEnableClientState(GL_COLOR_ARRAY);       // Enable colors array
-
-    glVertexPointer(3, GL_FLOAT, 0, amesh.animVertices);         // Pointer to vertex coords array
-    glTexCoordPointer(2, GL_FLOAT, 0, amesh.texcoords);      // Pointer to texture coords array
-    if (amesh.animNormals != NULL) glNormalPointer(GL_FLOAT, 0, amesh.animNormals);           // Pointer to normals array
-    //if (mesh.colors != NULL) glColorPointer(4, GL_UNSIGNED_BYTE, 0, mesh.colors);   // Pointer to colors array
-
-    rlPushMatrix();
-        rlMultMatrixf(MatrixToFloat(transform));
-        rlColor4ub(material.maps[MAP_DIFFUSE].color.r, material.maps[MAP_DIFFUSE].color.g, material.maps[MAP_DIFFUSE].color.b, material.maps[MAP_DIFFUSE].color.a);
-
-        if (amesh.triangles != NULL) glDrawElements(GL_TRIANGLES, amesh.triangleCount*3, GL_UNSIGNED_SHORT, amesh.triangles);
-        else glDrawArrays(GL_TRIANGLES, 0, amesh.vertexCount);
-    rlPopMatrix();
-
-    glDisableClientState(GL_VERTEX_ARRAY);                  // Disable vertex array
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);           // Disable texture coords array
-    if (amesh.animNormals != NULL) glDisableClientState(GL_NORMAL_ARRAY);    // Disable normals array
-    //if (mesh.colors != NULL) glDisableClientState(GL_NORMAL_ARRAY);     // Disable colors array
-
-    glDisable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, 0);
-*/
-#endif
-
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    // Bind shader program
-    glUseProgram(material.shader.id);
-
-    // Matrices and other values required by shader
-    //-----------------------------------------------------
-    // Calculate and send to shader model matrix (used by PBR shader)
-    if (material.shader.locs[LOC_MATRIX_MODEL] != -1) SetShaderValueMatrix(material.shader, material.shader.locs[LOC_MATRIX_MODEL], transform);
-
-    // Upload to shader material.colDiffuse
-    if (material.shader.locs[LOC_COLOR_DIFFUSE] != -1)
-        glUniform4f(material.shader.locs[LOC_COLOR_DIFFUSE], (float)material.maps[MAP_DIFFUSE].color.r/255.0f,
-                                                           (float)material.maps[MAP_DIFFUSE].color.g/255.0f,
-                                                           (float)material.maps[MAP_DIFFUSE].color.b/255.0f,
-                                                           (float)material.maps[MAP_DIFFUSE].color.a/255.0f);
-
-    // Upload to shader material.colSpecular (if available)
-    if (material.shader.locs[LOC_COLOR_SPECULAR] != -1)
-        glUniform4f(material.shader.locs[LOC_COLOR_SPECULAR], (float)material.maps[MAP_SPECULAR].color.r/255.0f,
-                                                               (float)material.maps[MAP_SPECULAR].color.g/255.0f,
-                                                               (float)material.maps[MAP_SPECULAR].color.b/255.0f,
-                                                               (float)material.maps[MAP_SPECULAR].color.a/255.0f);
-
-    if (material.shader.locs[LOC_MATRIX_VIEW] != -1) SetShaderValueMatrix(material.shader, material.shader.locs[LOC_MATRIX_VIEW], modelview);
-    if (material.shader.locs[LOC_MATRIX_PROJECTION] != -1) SetShaderValueMatrix(material.shader, material.shader.locs[LOC_MATRIX_PROJECTION], projection);
-
-    // At this point the modelview matrix just contains the view matrix (camera)
-    // That's because BeginMode3D() sets it an no model-drawing function modifies it, all use rlPushMatrix() and rlPopMatrix()
-    Matrix matView = modelview;         // View matrix (camera)
-    Matrix matProjection = projection;  // Projection matrix (perspective)
-
-    // Calculate model-view matrix combining matModel and matView
-    Matrix matModelView = MatrixMultiply(transform, matView);           // Transform to camera-space coordinates
-    //-----------------------------------------------------
-
-    // Bind active texture maps (if available)
-    for (int i = 0; i < MAX_MATERIAL_MAPS; i++)
-    {
-        if (material.maps[i].texture.id > 0)
-        {
-            glActiveTexture(GL_TEXTURE0 + i);
-            if ((i == MAP_IRRADIANCE) || (i == MAP_PREFILTER) || (i == MAP_CUBEMAP)) glBindTexture(GL_TEXTURE_CUBE_MAP, material.maps[i].texture.id);
-            else glBindTexture(GL_TEXTURE_2D, material.maps[i].texture.id);
-
-            glUniform1i(material.shader.locs[LOC_MAP_DIFFUSE + i], i);
-        }
-    }
-
-    // Bind vertex array objects (or VBOs)
-    if (vaoSupported) glBindVertexArray(amesh.vaoId);
-    else
-    {
-        // TODO: Simplify VBO binding into a for loop
-
-        // Bind mesh VBO data: vertex position (shader-location = 0)
-        glBindBuffer(GL_ARRAY_BUFFER, amesh.vboId[0]);
-        glVertexAttribPointer(material.shader.locs[LOC_VERTEX_POSITION], 3, GL_FLOAT, 0, 0, 0);
-        glEnableVertexAttribArray(material.shader.locs[LOC_VERTEX_POSITION]);
-
-        // Bind mesh VBO data: vertex texcoords (shader-location = 1)
-        glBindBuffer(GL_ARRAY_BUFFER, amesh.vboId[1]);
-        glVertexAttribPointer(material.shader.locs[LOC_VERTEX_TEXCOORD01], 2, GL_FLOAT, 0, 0, 0);
-        glEnableVertexAttribArray(material.shader.locs[LOC_VERTEX_TEXCOORD01]);
-
-        // Bind mesh VBO data: vertex normals (shader-location = 2, if available)
-        if (material.shader.locs[LOC_VERTEX_NORMAL] != -1)
-        {
-            glBindBuffer(GL_ARRAY_BUFFER, amesh.vboId[2]);
-            glVertexAttribPointer(material.shader.locs[LOC_VERTEX_NORMAL], 3, GL_FLOAT, 0, 0, 0);
-            glEnableVertexAttribArray(material.shader.locs[LOC_VERTEX_NORMAL]);
-        }
-
-        // Bind mesh VBO data: vertex colors (shader-location = 3, if available)
-        if (material.shader.locs[LOC_VERTEX_COLOR] != -1)
-        {
-            if (amesh.vboId[3] != 0)
-            {
-                glBindBuffer(GL_ARRAY_BUFFER, amesh.vboId[3]);
-                glVertexAttribPointer(material.shader.locs[LOC_VERTEX_COLOR], 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, 0);
-                glEnableVertexAttribArray(material.shader.locs[LOC_VERTEX_COLOR]);
-            }
-            else
-            {
-                // Set default value for unused attribute
-                // NOTE: Required when using default shader and no VAO support
-                glVertexAttrib4f(material.shader.locs[LOC_VERTEX_COLOR], 1.0f, 1.0f, 1.0f, 1.0f);
-                glDisableVertexAttribArray(material.shader.locs[LOC_VERTEX_COLOR]);
-            }
-        }
-
-        // Bind mesh VBO data: vertex tangents (shader-location = 4, if available)
-        if (material.shader.locs[LOC_VERTEX_TANGENT] != -1)
-        {
-            glBindBuffer(GL_ARRAY_BUFFER, amesh.vboId[4]);
-            glVertexAttribPointer(material.shader.locs[LOC_VERTEX_TANGENT], 4, GL_FLOAT, 0, 0, 0);
-            glEnableVertexAttribArray(material.shader.locs[LOC_VERTEX_TANGENT]);
-        }
-
-        // Bind mesh VBO data: vertex texcoords2 (shader-location = 5, if available)
-        if (material.shader.locs[LOC_VERTEX_TEXCOORD02] != -1)
-        {
-            glBindBuffer(GL_ARRAY_BUFFER, amesh.vboId[5]);
-            glVertexAttribPointer(material.shader.locs[LOC_VERTEX_TEXCOORD02], 2, GL_FLOAT, 0, 0, 0);
-            glEnableVertexAttribArray(material.shader.locs[LOC_VERTEX_TEXCOORD02]);
-        }
-
-        if (amesh.triangles != NULL) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, amesh.vboId[6]);
-    }
-
-    int eyesCount = 1;
-#if defined(SUPPORT_VR_SIMULATOR)
-    if (vrStereoRender) eyesCount = 2;
-#endif
-
-    for (int eye = 0; eye < eyesCount; eye++)
-    {
-        if (eyesCount == 1) modelview = matModelView;
-        #if defined(SUPPORT_VR_SIMULATOR)
-        else SetStereoView(eye, matProjection, matModelView);
-        #endif
-
-        // Calculate model-view-projection matrix (MVP)
-        Matrix matMVP = MatrixMultiply(modelview, projection);        // Transform to screen-space coordinates
-
-        // Send combined model-view-projection matrix to shader
-        glUniformMatrix4fv(material.shader.locs[LOC_MATRIX_MVP], 1, false, MatrixToFloat(matMVP));
-
-        // Draw call!
-        if (amesh.triangles != NULL) glDrawElements(GL_TRIANGLES, amesh.triangleCount*3, GL_UNSIGNED_SHORT, 0); // Indexed vertices draw
-        else glDrawArrays(GL_TRIANGLES, 0, amesh.vertexCount);
-    }
-
-    // Unbind all binded texture maps
-    for (int i = 0; i < MAX_MATERIAL_MAPS; i++)
-    {
-        glActiveTexture(GL_TEXTURE0 + i);       // Set shader active texture
-        if ((i == MAP_IRRADIANCE) || (i == MAP_PREFILTER) || (i == MAP_CUBEMAP)) glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-        else glBindTexture(GL_TEXTURE_2D, 0);   // Unbind current active texture
-    }
-
-    // Unind vertex array objects (or VBOs)
-    if (vaoSupported) glBindVertexArray(0);
-    else
-    {
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        if (amesh.triangles != NULL) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    }
-
-    // Unbind shader program
-    glUseProgram(0);
-
-    // Restore projection/modelview matrices
-    // NOTE: In stereo rendering matrices are being modified to fit every eye
-    projection = matProjection;
-    modelview = matView;
-#endif
-}
 
 #ifdef __cplusplus
 extern "C" {            // Prevents name mangling of functions
@@ -667,7 +236,7 @@ AnimatedModel LoadAnimatedModel(const char *filename)
 {
     AnimatedModel out = LoadIQM(filename);
 
-    for (int i = 0; i < out.meshCount; i++) rlLoadAnimatedMesh(&out.mesh[i], false);
+    for (int i = 0; i < out.meshCount; i++) rlLoadMesh(&out.meshes[i], false);
 
     out.transform = MatrixIdentity();
     out.meshMaterialId = malloc(sizeof(int)*out.meshCount);
@@ -692,7 +261,7 @@ AnimatedModel AnimatedModelAddTexture(AnimatedModel model, const char *filename)
     return model;
 }
 
-// Set the material for a mesh
+// Set the material for a meshes
 AnimatedModel SetMeshMaterial(AnimatedModel model, int meshid, int textureid)
 {
     if (meshid > model.meshCount)
@@ -900,9 +469,9 @@ void UnloadAnimatedModel(AnimatedModel model)
     free(model.joints);
     free(model.basepose);
 
-    for (int i = 0; i < model.meshCount; i++) rlUnloadAnimatedMesh(&model.mesh[i]);
+    for (int i = 0; i < model.meshCount; i++) rlUnloadMesh(&model.meshes[i]);
 
-    free(model.mesh);
+    free(model.meshes);
 }
 
 // Unload animation
@@ -949,9 +518,9 @@ void AnimateModel(AnimatedModel model, Animation anim, int frame)
         int wcounter = 0;
         int weightId = 0;
 
-        for (int i = 0; i < model.mesh[m].vertexCount; i++)
+        for (int i = 0; i < model.meshes[m].vertexCount; i++)
         {
-            weightId = model.mesh[m].weightId[wcounter];
+            weightId = model.meshes[m].weightId[wcounter];
             baset = model.basepose[weightId].translation;
             baser = model.basepose[weightId].rotation;
             bases = model.basepose[weightId].scale;
@@ -960,21 +529,23 @@ void AnimateModel(AnimatedModel model, Animation anim, int frame)
             outs = anim.framepose[frame][weightId].scale;
 
             // vertices
-            outv = (Vector3){model.mesh[m].vertices[vcounter],model.mesh[m].vertices[vcounter + 1],model.mesh[m].vertices[vcounter + 2]};
-            outv = Vector3MultiplyV(outv,outs);
-            outv = Vector3Subtract(outv,baset);
-            outv = Vector3RotateByQuaternion(outv,QuaternionMultiply(outr,QuaternionInvert(baser)));
-            outv = Vector3Add(outv,outt);
-            model.mesh[m].animVertices[vcounter] = outv.x;
-            model.mesh[m].animVertices[vcounter + 1] = outv.y;
-            model.mesh[m].animVertices[vcounter + 2] = outv.z;
+            // NOTE: We use meshes.baseVertices (default position) to calculate meshes.vertices (animated position)
+            outv = (Vector3){ model.meshes[m].baseVertices[vcounter], model.meshes[m].baseVertices[vcounter + 1], model.meshes[m].baseVertices[vcounter + 2] };
+            outv = Vector3MultiplyV(outv, outs);
+            outv = Vector3Subtract(outv, baset);
+            outv = Vector3RotateByQuaternion(outv, QuaternionMultiply(outr, QuaternionInvert(baser)));
+            outv = Vector3Add(outv, outt);
+            model.meshes[m].vertices[vcounter] = outv.x;
+            model.meshes[m].vertices[vcounter + 1] = outv.y;
+            model.meshes[m].vertices[vcounter + 2] = outv.z;
 
             // normals
-            outn = (Vector3){model.mesh[m].normals[vcounter],model.mesh[m].normals[vcounter + 1],model.mesh[m].normals[vcounter + 2]};
-            outn = Vector3RotateByQuaternion(outn,QuaternionMultiply(outr,QuaternionInvert(baser)));
-            model.mesh[m].animNormals[vcounter] = outn.x;
-            model.mesh[m].animNormals[vcounter + 1] = outn.y;
-            model.mesh[m].animNormals[vcounter + 2] = outn.z;
+            // NOTE: We use meshes.baseNormals (default normal) to calculate meshes.normals (animated normals)
+            outn = (Vector3){ model.meshes[m].baseNormals[vcounter], model.meshes[m].baseNormals[vcounter + 1], model.meshes[m].baseNormals[vcounter + 2] };
+            outn = Vector3RotateByQuaternion(outn, QuaternionMultiply(outr, QuaternionInvert(baser)));
+            model.meshes[m].normals[vcounter] = outn.x;
+            model.meshes[m].normals[vcounter + 1] = outn.y;
+            model.meshes[m].normals[vcounter + 2] = outn.z;
             vcounter += 3;
             wcounter += 4;
         }
@@ -982,41 +553,37 @@ void AnimateModel(AnimatedModel model, Animation anim, int frame)
 }
 
 // Draw an animated model
-void DrawAnimatedModel(AnimatedModel model,Vector3 position,float scale,Color tint)
+void DrawAnimatedModel(AnimatedModel model, Vector3 position, float scale, Color tint)
 {
     Vector3 vScale = { scale, scale, scale };
-    Vector3 rotationAxis = { 0.0f,0.0f,0.0f };
+    Vector3 rotationAxis = { 1.0f, 0.0f,0.0f };
 
-    DrawAnimatedModelEx(model, position, rotationAxis, 0.0f, vScale, tint);
+    DrawAnimatedModelEx(model, position, rotationAxis, -90.0f, vScale, tint);
 }
 
 // Draw an animated model with extended parameters
-void DrawAnimatedModelEx(AnimatedModel model,Vector3 position,Vector3 rotationAxis,float rotationAngle, Vector3 scale,Color tint)
+void DrawAnimatedModelEx(AnimatedModel model, Vector3 position, Vector3 rotationAxis, float rotationAngle, Vector3 scale, Color tint)
 {
     if (model.materialCount == 0)
     {
-        TraceLog(LOG_WARNING,"No materials set, can't draw animated mesh\n");
+        TraceLog(LOG_WARNING,"No materials set, can't draw animated meshes\n");
         return;
     }
 
-    Matrix matScale = MatrixScale(scale.x,scale.y,scale.z);
-    Matrix matRotation = MatrixRotate(rotationAxis,rotationAngle*DEG2RAD);
-    Matrix matTranslation = MatrixTranslate(position.x,position.y,position.z);
+    Matrix matScale = MatrixScale(scale.x, scale.y, scale.z);
+    Matrix matRotation = MatrixRotate(rotationAxis, rotationAngle*DEG2RAD);
+    Matrix matTranslation = MatrixTranslate(position.x, position.y, position.z);
 
-    Matrix matTransform = MatrixMultiply(MatrixMultiply(matScale,matRotation),matTranslation);
-    model.transform = MatrixMultiply(model.transform,matTransform);
+    Matrix matTransform = MatrixMultiply(MatrixMultiply(matScale, matRotation), matTranslation);
+    model.transform = MatrixMultiply(model.transform, matTransform);
 
     for (int i = 0; i < model.meshCount; i++)
     {
-        rlUpdateAnimatedMesh(&model.mesh[i]);
-        rlDrawAnimatedMesh(model.mesh[i],model.materials[model.meshMaterialId[i]],MatrixIdentity());
+        rlUpdateMesh(model.meshes[i], 0, model.meshes[i].vertexCount);      // Update vertex position
+        rlUpdateMesh(model.meshes[i], 2, model.meshes[i].vertexCount);      // Update vertex normals
+        rlDrawMesh(model.meshes[i], model.materials[model.meshMaterialId[i]], model.transform);   // Draw meshes
     }
 }
-
-
-
-
-
 
 // Load animated model meshes from IQM file
 static AnimatedModel LoadIQM(const char *filename)
@@ -1068,22 +635,29 @@ static AnimatedModel LoadIQM(const char *filename)
     fread(imesh, sizeof(IQMMesh)*iqm.num_meshes, 1, iqmFile);
 
     model.meshCount = iqm.num_meshes;
-    model.mesh = malloc(sizeof(AnimatedMesh)*iqm.num_meshes);
+    model.meshes = malloc(sizeof(Mesh)*iqm.num_meshes);
+    
+    char name[MESH_NAME_LENGTH];
 
     for (int i = 0; i < iqm.num_meshes; i++)
     {
         fseek(iqmFile,iqm.ofs_text+imesh[i].name,SEEK_SET);
-        fread(model.mesh[i].name, sizeof(char)*MESH_NAME_LENGTH, 1, iqmFile);
-        model.mesh[i].vertexCount = imesh[i].num_vertexes;
-        model.mesh[i].vertices = malloc(sizeof(float)*imesh[i].num_vertexes*3);
-        model.mesh[i].normals = malloc(sizeof(float)*imesh[i].num_vertexes*3);
-        model.mesh[i].texcoords = malloc(sizeof(float)*imesh[i].num_vertexes*2);
-        model.mesh[i].weightId = malloc(sizeof(int)*imesh[i].num_vertexes*4);
-        model.mesh[i].weightBias = malloc(sizeof(float)*imesh[i].num_vertexes*4);
-        model.mesh[i].triangleCount = imesh[i].num_triangles;
-        model.mesh[i].triangles = malloc(sizeof(unsigned short)*imesh[i].num_triangles*3);
-        model.mesh[i].animVertices = malloc(sizeof(float)*imesh[i].num_vertexes*3);
-        model.mesh[i].animNormals = malloc(sizeof(float)*imesh[i].num_vertexes*3);
+        fread(name, sizeof(char)*MESH_NAME_LENGTH, 1, iqmFile);         // Mesh name not used...
+        model.meshes[i].vertexCount = imesh[i].num_vertexes;
+        
+        model.meshes[i].baseVertices = malloc(sizeof(float)*imesh[i].num_vertexes*3);     // Default IQM base position
+        model.meshes[i].baseNormals = malloc(sizeof(float)*imesh[i].num_vertexes*3);      // Default IQM base normal
+        
+        model.meshes[i].texcoords = malloc(sizeof(float)*imesh[i].num_vertexes*2);
+        model.meshes[i].weightId = malloc(sizeof(int)*imesh[i].num_vertexes*4);
+        model.meshes[i].weightBias = malloc(sizeof(float)*imesh[i].num_vertexes*4);
+        
+        model.meshes[i].triangleCount = imesh[i].num_triangles;
+        model.meshes[i].indices = malloc(sizeof(unsigned short)*imesh[i].num_triangles*3);
+        
+        // What we actually process for rendering, should be updated transforming meshes.vertices and meshes.normals
+        model.meshes[i].vertices = malloc(sizeof(float)*imesh[i].num_vertexes*3);     
+        model.meshes[i].normals = malloc(sizeof(float)*imesh[i].num_vertexes*3);
     }
 
     // tris
@@ -1095,12 +669,12 @@ static AnimatedModel LoadIQM(const char *filename)
     {
         int tcounter = 0;
 
-        for (int i=imesh[m].first_triangle; i < imesh[m].first_triangle+imesh[m].num_triangles; i++)
+        for (int i = imesh[m].first_triangle; i < imesh[m].first_triangle+imesh[m].num_triangles; i++)
         {
             // IQM triangles are stored counter clockwise, but raylib sets opengl to clockwise drawing, so we swap them around
-            model.mesh[m].triangles[tcounter+2] = tri[i].vertex[0] - imesh[m].first_vertex;
-            model.mesh[m].triangles[tcounter+1] = tri[i].vertex[1] - imesh[m].first_vertex;
-            model.mesh[m].triangles[tcounter] = tri[i].vertex[2] - imesh[m].first_vertex;
+            model.meshes[m].indices[tcounter+2] = tri[i].vertex[0] - imesh[m].first_vertex;
+            model.meshes[m].indices[tcounter+1] = tri[i].vertex[1] - imesh[m].first_vertex;
+            model.meshes[m].indices[tcounter] = tri[i].vertex[2] - imesh[m].first_vertex;
             tcounter += 3;
         }
     }
@@ -1125,8 +699,8 @@ static AnimatedModel LoadIQM(const char *filename)
                     int vcounter = 0;
                     for (int i = imesh[m].first_vertex*3; i < (imesh[m].first_vertex + imesh[m].num_vertexes)*3; i++)
                     {
-                        model.mesh[m].vertices[vcounter] = vertex[i];
-                        model.mesh[m].animVertices[vcounter] = vertex[i];
+                        model.meshes[m].vertices[vcounter] = vertex[i];
+                        model.meshes[m].baseVertices[vcounter] = vertex[i];
                         vcounter++;
                     }
                 }
@@ -1142,8 +716,8 @@ static AnimatedModel LoadIQM(const char *filename)
                     int vcounter = 0;
                     for (int i = imesh[m].first_vertex*3; i < (imesh[m].first_vertex + imesh[m].num_vertexes)*3; i++)
                     {
-                        model.mesh[m].normals[vcounter] = normal[i];
-                        model.mesh[m].animNormals[vcounter] = normal[i];
+                        model.meshes[m].normals[vcounter] = normal[i];
+                        model.meshes[m].baseNormals[vcounter] = normal[i];
                         vcounter++;
                     }
                 }
@@ -1159,7 +733,7 @@ static AnimatedModel LoadIQM(const char *filename)
                     int vcounter = 0;
                     for (int i = imesh[m].first_vertex*2; i < (imesh[m].first_vertex + imesh[m].num_vertexes)*2; i++)
                     {
-                        model.mesh[m].texcoords[vcounter] = text[i];
+                        model.meshes[m].texcoords[vcounter] = text[i];
                         vcounter++;
                     }
                 }
@@ -1175,7 +749,7 @@ static AnimatedModel LoadIQM(const char *filename)
                     int vcounter = 0;
                     for (int i = imesh[m].first_vertex*4; i < (imesh[m].first_vertex + imesh[m].num_vertexes)*4; i++)
                     {
-                        model.mesh[m].weightId[vcounter] = blendi[i];
+                        model.meshes[m].weightId[vcounter] = blendi[i];
                         vcounter++;
                     }
                 }
@@ -1191,7 +765,7 @@ static AnimatedModel LoadIQM(const char *filename)
                     int vcounter = 0;
                     for (int i = imesh[m].first_vertex*4; i < (imesh[m].first_vertex + imesh[m].num_vertexes)*4; i++)
                     {
-                        model.mesh[m].weightBias[vcounter] = blendw[i]/255.0f;
+                        model.meshes[m].weightBias[vcounter] = blendw[i]/255.0f;
                         vcounter++;
                     }
                 }

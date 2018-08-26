@@ -71,6 +71,8 @@
 #ifndef RAYLIB_H
 #define RAYLIB_H
 
+#include <stdarg.h>                             // Required for: va_list - Only used by TraceLogCallback
+
 #if defined(_WIN32) && defined(BUILD_LIBTYPE_SHARED)
     #define RLAPI __declspec(dllexport)         // We are building raylib as a Win32 shared library (.dll)
 #elif defined(_WIN32) && defined(USE_LIBTYPE_SHARED)
@@ -134,14 +136,42 @@
 #define KEY_LEFT_SHIFT      340
 #define KEY_LEFT_CONTROL    341
 #define KEY_LEFT_ALT        342
+#define KEY_LEFT_SUPER      343
 #define KEY_RIGHT_SHIFT     344
 #define KEY_RIGHT_CONTROL   345
 #define KEY_RIGHT_ALT       346
-#define KEY_GRAVE            96
-#define KEY_SLASH            47
+#define KEY_RIGHT_SUPER     347
+#define KEY_KB_MENU         348
+#define KEY_LEFT_BRACKET     91
 #define KEY_BACKSLASH        92
+#define KEY_RIGHT_BRACKET    93
+#define KEY_GRAVE            96
+
+// Keyboard Number Pad Keys
+#define KEY_KP_0            320
+#define KEY_KP_1            321
+#define KEY_KP_2            322
+#define KEY_KP_3            323
+#define KEY_KP_4            324
+#define KEY_KP_5            325
+#define KEY_KP_6            326
+#define KEY_KP_7            327
+#define KEY_KP_8            328
+#define KEY_KP_9            329
+#define KEY_KP_DECIMAL      330
+#define KEY_KP_DIVIDE       331
+#define KEY_KP_MULTIPLY     332
+#define KEY_KP_SUBTRACT     333
+#define KEY_KP_ADD          334
+#define KEY_KP_ENTER        335
+#define KEY_KP_EQUAL        336
 
 // Keyboard Alpha Numeric Keys
+#define KEY_APOSTROPHE       39
+#define KEY_COMMA            44
+#define KEY_MINUS            45
+#define KEY_PERIOD           46
+#define KEY_SLASH            47
 #define KEY_ZERO             48
 #define KEY_ONE              49
 #define KEY_TWO              50
@@ -152,6 +182,8 @@
 #define KEY_SEVEN            55
 #define KEY_EIGHT            56
 #define KEY_NINE             57
+#define KEY_SEMICOLON        59
+#define KEY_EQUAL            61
 #define KEY_A                65
 #define KEY_B                66
 #define KEY_C                67
@@ -350,6 +382,7 @@ typedef struct Vector4 {
     float w;
 } Vector4;
 
+// Quaternion type, same as Vector4
 typedef Vector4 Quaternion;
 
 // Matrix type (OpenGL style 4x4 - right handed, column major)
@@ -396,12 +429,27 @@ typedef struct Texture2D {
     int format;             // Data format (PixelFormat type)
 } Texture2D;
 
+// Texture type, same as Texture2D
+typedef Texture2D Texture;
+
 // RenderTexture2D type, for texture rendering
 typedef struct RenderTexture2D {
     unsigned int id;        // OpenGL Framebuffer Object (FBO) id
     Texture2D texture;      // Color buffer attachment texture
     Texture2D depth;        // Depth buffer attachment texture
 } RenderTexture2D;
+
+// RenderTexture type, same as RenderTexture2D
+typedef RenderTexture2D RenderTexture;
+
+typedef struct NPatchInfo {
+    Rectangle sourceRec;   // Region in the texture
+    int left;              // left border offset
+    int top;               // top border offset
+    int right;             // right border offset
+    int bottom;            // bottom border offset
+    int type;              // layout of the n-patch: 3x3, 1x3 or 3x1
+} NPatchInfo;
 
 // Font character info
 typedef struct CharInfo {
@@ -421,7 +469,7 @@ typedef struct Font {
     CharInfo *chars;        // Characters info data
 } Font;
 
-#define SpriteFont  Font    // SpriteFont type fallback, defaults to Font
+#define SpriteFont Font     // SpriteFont type fallback, defaults to Font
 
 // Camera type, defines a camera position/orientation in 3d space
 typedef struct Camera3D {
@@ -432,7 +480,7 @@ typedef struct Camera3D {
     int type;               // Camera type, defines projection type: CAMERA_PERSPECTIVE or CAMERA_ORTHOGRAPHIC
 } Camera3D;
 
-#define Camera  Camera3D    // Camera type fallback, defaults to Camera3D
+#define Camera Camera3D     // Camera type fallback, defaults to Camera3D
 
 // Camera2D type, defines a 2d camera
 typedef struct Camera2D {
@@ -454,6 +502,7 @@ typedef struct Mesh {
     int vertexCount;        // Number of vertices stored in arrays
     int triangleCount;      // Number of triangles stored (indexed or not)
 
+    // Default vertex data
     float *vertices;        // Vertex position (XYZ - 3 components per vertex) (shader-location = 0)
     float *texcoords;       // Vertex texture coordinates (UV - 2 components per vertex) (shader-location = 1)
     float *texcoords2;      // Vertex second texture coordinates (useful for lightmaps) (shader-location = 5)
@@ -461,9 +510,16 @@ typedef struct Mesh {
     float *tangents;        // Vertex tangents (XYZW - 4 components per vertex) (shader-location = 4)
     unsigned char *colors;  // Vertex colors (RGBA - 4 components per vertex) (shader-location = 3)
     unsigned short *indices;// Vertex indices (in case vertex data comes indexed)
+    
+    // Animation vertex data
+    float *baseVertices;    // Vertex base position (required to apply bones transformations)
+    float *baseNormals;     // Vertex base normals (required to apply bones transformations)
+    float *weightBias;      // Vertex weight bias
+    int *weightId;          // Vertex weight id
 
+    // OpenGL identifiers
     unsigned int vaoId;     // OpenGL Vertex Array Object id
-    unsigned int vboId[7];  // OpenGL Vertex Buffer Objects id (7 types of vertex data)
+    unsigned int vboId[7];  // OpenGL Vertex Buffer Objects id (default vertex data)
 } Mesh;
 
 // Shader type (generic)
@@ -712,6 +768,16 @@ typedef enum {
     HMD_SONY_PSVR
 } VrDeviceType;
 
+// Type of n-patch
+typedef enum {
+    NPT_9PATCH = 0,         // 3x3
+    NPT_3PATCH_VERTICAL,    // 1x3
+    NPT_3PATCH_HORIZONTAL   // 3x1
+} NPatchType;
+
+// Callbacks to be implemented by users
+typedef void (*TraceLogCallback)(int msgType, const char *text, va_list args);
+
 #ifdef __cplusplus
 extern "C" {            // Prevents name mangling of functions
 #endif
@@ -764,7 +830,7 @@ RLAPI Ray GetMouseRay(Vector2 mousePosition, Camera camera);      // Returns a r
 RLAPI Vector2 GetWorldToScreen(Vector3 position, Camera camera);  // Returns the screen space position for a 3d world space position
 RLAPI Matrix GetCameraMatrix(Camera camera);                      // Returns camera transform matrix (view matrix)
 
-// Timming-related functions
+// timing-related functions
 RLAPI void SetTargetFPS(int fps);                                 // Set target FPS (maximum)
 RLAPI int GetFPS(void);                                           // Returns current FPS
 RLAPI float GetFrameTime(void);                                   // Returns time in seconds for last frame drawn
@@ -781,6 +847,7 @@ RLAPI Color Fade(Color color, float alpha);                       // Color fade-
 RLAPI void ShowLogo(void);                                        // Activate raylib logo at startup (can be done with flags)
 RLAPI void SetConfigFlags(unsigned char flags);                   // Setup window configuration flags (view FLAGS)
 RLAPI void SetTraceLog(unsigned char types);                      // Enable trace log message types (bit flags based)
+RLAPI void SetTraceLogCallback(TraceLogCallback callback);        // Set a trace log callback to enable custom logging bypassing raylib's one
 RLAPI void TraceLog(int logType, const char *text, ...);          // Show trace log messages (LOG_INFO, LOG_WARNING, LOG_ERROR, LOG_DEBUG)
 RLAPI void TakeScreenshot(const char *fileName);                  // Takes a screenshot of current screen (saved a .png)
 RLAPI int GetRandomValue(int min, int max);                       // Returns a random value between min and max (both included)
@@ -978,6 +1045,7 @@ RLAPI void DrawTextureV(Texture2D texture, Vector2 position, Color tint);       
 RLAPI void DrawTextureEx(Texture2D texture, Vector2 position, float rotation, float scale, Color tint);  // Draw a Texture2D with extended parameters
 RLAPI void DrawTextureRec(Texture2D texture, Rectangle sourceRec, Vector2 position, Color tint);         // Draw a part of a texture defined by a rectangle
 RLAPI void DrawTexturePro(Texture2D texture, Rectangle sourceRec, Rectangle destRec, Vector2 origin, float rotation, Color tint); // Draw a part of a texture defined by a rectangle with 'pro' parameters
+RLAPI void DrawTextureNPatch(Texture2D texture, NPatchInfo nPatchInfo, Rectangle destRec, Vector2 origin, float rotation, Color tint); // Draws a texture (or part of it) that stretches or shrinks nicely.
 
 //------------------------------------------------------------------------------------
 // Font Loading and Text Drawing Functions (Module: text)
@@ -1001,7 +1069,7 @@ RLAPI int MeasureText(const char *text, int fontSize);                          
 RLAPI Vector2 MeasureTextEx(Font font, const char *text, float fontSize, float spacing);    // Measure string size for Font
 RLAPI const char *FormatText(const char *text, ...);                                        // Formatting of text with variables to 'embed'
 RLAPI const char *SubText(const char *text, int position, int length);                      // Get a piece of a text string
-RLAPI int GetGlyphIndex(Font font, int character);                                          // Get index position for a unicode character on sprite font
+RLAPI int GetGlyphIndex(Font font, int character);                                          // Get index position for a unicode character on font
 
 //------------------------------------------------------------------------------------
 // Basic 3d Shapes Drawing Functions (Module: models)

@@ -95,7 +95,9 @@
 #define RAYMATH_IMPLEMENTATION  // Define external out-of-line implementation of raymath here
 #include "raymath.h"            // Required for: Vector3 and Matrix functions
 
+#define RLGL_IMPLEMENTATION
 #include "rlgl.h"               // raylib OpenGL abstraction layer to OpenGL 1.1, 3.3+ or ES2
+
 #include "utils.h"              // Required for: fopen() Android mapping
 
 #if defined(SUPPORT_GESTURES_SYSTEM)
@@ -139,6 +141,9 @@
 #endif
 
 #if defined(PLATFORM_DESKTOP) || defined(PLATFORM_WEB)
+    #if defined(PLATFORM_WEB)
+        #define GLFW_INCLUDE_ES2
+    #endif
     //#define GLFW_INCLUDE_NONE     // Disable the standard OpenGL header inclusion on GLFW3
     #include <GLFW/glfw3.h>         // GLFW3 library: Windows, OpenGL context and Input management
                                     // NOTE: GLFW3 already includes gl.h (OpenGL) headers
@@ -632,7 +637,17 @@ bool IsWindowReady(void)
 // Check if KEY_ESCAPE pressed or Close icon pressed
 bool WindowShouldClose(void)
 {
-#if defined(PLATFORM_DESKTOP) || defined(PLATFORM_WEB)
+#if defined(PLATFORM_WEB)
+    // Emterpreter-Async required to run sync code
+    // https://github.com/kripken/emscripten/wiki/Emterpreter#emterpreter-async-run-synchronous-code
+    // By default, this function is never called on a web-ready raylib example because we encapsulate
+    // frame code in a UpdateDrawFrame() function, to allow browser manage execution asynchronously
+    // but now emscripten allows sync code to be executed in an interpreted way, using emterpreter!
+    emscripten_sleep(16);
+    return false;
+#endif
+    
+#if defined(PLATFORM_DESKTOP)
     if (windowReady)
     {
         // While window minimized, stop loop execution
@@ -871,7 +886,7 @@ void EndDrawing(void)
     // Wait for some milliseconds...
     if (frameTime < targetTime)
     {
-        Wait((targetTime - frameTime)*1000.0f);
+        Wait( (float)(targetTime - frameTime)*1000.0f);
 
         currentTime = GetTime();
         double extraTime = currentTime - previousTime;
@@ -1331,11 +1346,19 @@ const char *GetExtension(const char *fileName)
     return (dot + 1);
 }
 
+// String pointer reverse break: returns right-most occurrence of charset in s
+static const char *strprbrk(const char *s, const char *charset)
+{
+    const char *latestMatch = NULL;
+    for (; s = strpbrk(s, charset), s != NULL; latestMatch = s++) { }
+    return latestMatch;
+}
+
 // Get pointer to filename for a path string
 const char *GetFileName(const char *filePath)
 {
-    const char *fileName = strrchr(filePath, '\\');
-    
+    const char *fileName = strprbrk(filePath, "\\/");
+
     if (!fileName || fileName == filePath) return filePath;
 
     return fileName + 1;
@@ -1345,14 +1368,17 @@ const char *GetFileName(const char *filePath)
 // Get directory for a given fileName (with path)
 const char *GetDirectoryPath(const char *fileName)
 {
-    char *lastSlash = NULL;
+    const char *lastSlash = NULL;
     static char filePath[256];      // MAX_DIRECTORY_PATH_SIZE = 256
     memset(filePath, 0, 256);
-    
-    lastSlash = strrchr(fileName, '\\');
+
+    lastSlash = strprbrk(fileName, "\\/");
+    if (!lastSlash)
+        return NULL;
+
     strncpy(filePath, fileName, strlen(fileName) - (strlen(lastSlash) - 1));
     filePath[strlen(fileName) - strlen(lastSlash)] = '\0';
-    
+
     return filePath;
 }
 
@@ -1854,6 +1880,10 @@ static bool InitGraphicsDevice(int width, int height)
 #if defined(PLATFORM_DESKTOP) || defined(PLATFORM_WEB)
     glfwSetErrorCallback(ErrorCallback);
 
+#if defined(__APPLE__)
+    glfwInitHint(GLFW_COCOA_CHDIR_RESOURCES, GLFW_FALSE);
+#endif
+
     if (!glfwInit())
     {
         TraceLog(LOG_WARNING, "Failed to initialize GLFW");
@@ -1900,14 +1930,14 @@ static bool InitGraphicsDevice(int width, int height)
 
     if (configFlags & FLAG_WINDOW_UNDECORATED) glfwWindowHint(GLFW_DECORATED, GL_FALSE);    // Border and buttons on Window
     else glfwWindowHint(GLFW_DECORATED, GL_TRUE);   // Decorated window
-    
-#if !defined(PLATFORM_WEB)  // FLAG_WINDOW_TRANSPARENT not supported on HTML5
+    // FLAG_WINDOW_TRANSPARENT not supported on HTML5 and not included in any released GLFW version yet
+#if defined(GLFW_TRANSPARENT_FRAMEBUFFER)
     if (configFlags & FLAG_WINDOW_TRANSPARENT) glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);     // Transparent framebuffer
     else glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_FALSE);  // Opaque framebuffer
 #endif
 
     if (configFlags & FLAG_MSAA_4X_HINT) glfwWindowHint(GLFW_SAMPLES, 4);   // Tries to enable multisampling x4 (MSAA), default is 0
-    
+
     // NOTE: When asking for an OpenGL context version, most drivers provide highest supported version
     // with forward compatibility to older OpenGL versions.
     // For example, if using OpenGL 1.1, driver can provide a 4.3 context forward compatible.
@@ -2491,7 +2521,7 @@ static void SetupFramebufferSize(int displayWidth, int displayHeight)
 // Initialize hi-resolution timer
 static void InitTimer(void)
 {
-    srand(time(NULL));              // Initialize random seed
+    srand((unsigned int)time(NULL));              // Initialize random seed
     
 #if !defined(SUPPORT_BUSY_WAIT_LOOP) && defined(_WIN32)
     timeBeginPeriod(1);             // Setup high-resolution timer to 1ms (granularity of 1-2 ms)

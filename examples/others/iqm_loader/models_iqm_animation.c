@@ -12,7 +12,6 @@
 #include "raylib.h"
 
 #define RIQM_IMPLEMENTATION
-#define RAYMATH_IMPLEMENTATION
 #include "riqm.h"
 
 int main()
@@ -34,7 +33,7 @@ int main()
 
     // Load the animated model mesh and basic data
     AnimatedModel model = LoadAnimatedModel("resources/guy.iqm");
-printf("VER %i\n",rlGetVersion());
+
     // Load model texture and set material
     // NOTE: There is only 1 mesh and 1 material (both at index 0), thats what the 2 0's are
     model = AnimatedModelAddTexture(model, "resources/guytex.png");   // REPLACE!
@@ -78,10 +77,10 @@ printf("VER %i\n",rlGetVersion());
                 DrawGrid(10, 1.0f);         // Draw a grid
 
             EndMode3D();
+            
+            DrawText("PRESS SPACE to PLAY IQM MODEL ANIMATION", 10, 10, 20, MAROON);
 
-            DrawText("(c) Guy IQM 3D model by -------", screenWidth - 200, screenHeight - 20, 10, GRAY);
-
-            DrawFPS(10, 10);
+            DrawText("(c) Guy IQM 3D model by @culacant", screenWidth - 200, screenHeight - 20, 10, GRAY);
 
         EndDrawing();
         //----------------------------------------------------------------------------------

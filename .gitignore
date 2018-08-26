@@ -48,7 +48,7 @@ ipch/
 # Ignore compiled binaries
 *.o
 *.exe
-!src/raylib.rc.o
+!raylib.rc.o
 
 # Ignore all examples files
 examples/*
@@ -60,6 +60,7 @@ examples/*
 !examples/*.png
 # Unignore examples Makefile
 !examples/Makefile
+!examples/Makefile.Android
 
 # Ignore all games files
 games/*
@@ -71,6 +72,7 @@ games/*
 !games/*.png
 # Unignore games makefile
 !games/Makefile
+!games/Makefile.Android
 
 # Ignore files build by xcode
 *.mode*v*
